@@ -41,7 +41,20 @@ def structured(
     anchor: Optional[str] = typer.Option(None, "--anchor", "-a", help="Column to use as entity anchor"),
 ) -> None:
     """Redact sensitive data from a structured file (CSV, JSON, XLSX)."""
-    raise NotImplementedError
+    try:
+        config = load_config()
+    except ConfigError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    from pseudoswapper.modes.structured import redact_structured
+    try:
+        out = redact_structured(file, config, Path.cwd(), cli_anchor=anchor)
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Redacted: {out}")
 
 
 @app.command()

@@ -1,0 +1,407 @@
+# pseudoswapper — User Guide
+
+## Table of Contents
+
+1. [What this tool does and doesn't do](#1-what-this-tool-does-and-doesnt-do)
+2. [Choosing a mode](#2-choosing-a-mode)
+3. [Setting up the config file](#3-setting-up-the-config-file)
+4. [Anchor field selection (Structured mode)](#4-anchor-field-selection-structured-mode)
+5. [Running the tool](#5-running-the-tool)
+6. [Restoring AI output](#6-restoring-ai-output)
+7. [Known limitations](#7-known-limitations)
+8. [Security notes](#8-security-notes)
+
+---
+
+## 1. What this tool does and doesn't do
+
+### The problem it solves
+
+You have a document or data file containing sensitive information — employee names, email addresses, internal project names, server IPs — and you want to share it with an AI assistant for analysis, summarisation, or refactoring. Manually removing and re-inserting those values is tedious and error-prone.
+
+`pseudoswapper` automates both halves:
+
+1. **Redact** — scan the file, replace each sensitive value with a human-readable token (`[PERSON_1]`, `[EMAIL_2]`, `[COMPANY_1]`), write the tokenised file.
+2. **Restore** — after the AI returns its output, swap all tokens back to the original values.
+
+### What never leaves your machine
+
+- The original sensitive values
+- The token-to-value mapping
+
+The mapping is held in a private temporary directory (mode `0700`, inaccessible to other OS users) for the duration of one redact → restore cycle. It is deleted automatically after a successful restore. Nothing is written to a persistent, user-visible file.
+
+### Relational integrity
+
+Consistent tokenisation across a file is not cosmetic — it is what makes AI output useful. If a user ID appears in 1000 log lines and each occurrence gets a different token, the AI cannot trace that user's actions. `pseudoswapper` guarantees that the same input value always produces the same token within a session. An ID that appears 1000 times is always `[PERSON_1]`, so the AI can reason about it coherently.
+
+### What it doesn't do
+
+- It does not make network calls at any point during redact or restore.
+- It does not persist token mappings between sessions (v1).
+- It does not redact `.docx` or `.pdf` files — convert to `.txt` first.
+- It does not guarantee 100% detection coverage for NLP-discovered entities (see [Known limitations](#7-known-limitations)).
+
+---
+
+## 2. Choosing a mode
+
+### Document mode — for prose
+
+Use document mode for freeform text: emails, reports, articles, meeting notes, support tickets, log excerpts copy-pasted into a text file.
+
+Detection uses three layers in priority order:
+
+| Layer | What it finds |
+|---|---|
+| YAML exact-match | Company names, project names, internal identifiers, known employees |
+| Regex | Email addresses, phone numbers, URLs, domain names, IP addresses |
+| NLP (spaCy) | Person names, organisation names, locations (best-effort) |
+
+**Limitation:** In document mode, an email address and the person it belongs to are tokenised independently (`[PERSON_1]` and `[EMAIL_1]`). The AI will not automatically know they are linked. Use Structured mode with an anchor field if that linkage matters.
+
+### Structured mode — for tables and structured data
+
+Use structured mode for CSV files, JSON arrays, and Excel spreadsheets.
+
+The key difference: each row is treated as a self-contained entity bundle. You nominate one column as the **anchor field** — the stable, unique identifier for each real-world entity. All rows sharing the same anchor value are guaranteed to produce the same token, and correlated fields (email, username, display name) within the same row are registered alongside the anchor.
+
+**Use structured mode when:**
+- Your file is a CSV, spreadsheet, or JSON array
+- You have a column that uniquely identifies each person (employee ID, user ID, full name)
+- You want the AI to know that a name and an email address belong to the same person
+
+### Quick decision guide
+
+```
+Is your file a CSV, spreadsheet (.xlsx), or JSON array?
+  → YES: use pseudoswapper structured
+  → NO:  use pseudoswapper document
+```
+
+---
+
+## 3. Setting up the config file
+
+### Location
+
+`~/.pseudoswapper_config.yaml`
+
+Copy the example template to get started:
+
+```bash
+cp pseudoswapper_config.example.yaml ~/.pseudoswapper_config.yaml
+```
+
+Then edit it:
+
+```bash
+pseudoswapper config --edit       # opens in $EDITOR
+pseudoswapper config --show       # prints the active config
+```
+
+### company_terms
+
+List exact strings that should always be redacted — highest priority, case-insensitive match.
+
+```yaml
+company_terms:
+  - Acme Corporation
+  - Acme Corp
+  - acme.com
+  - Project Nightingale
+  - internal-codename
+```
+
+Use this for company names, project codenames, internal domain names, and any proprietary identifiers that the NLP layer might miss.
+
+### employees
+
+Pre-register known individuals. This guarantees consistent tokenisation even when NLP misses a name (e.g. in tables, headers, or short strings with no prose context).
+
+```yaml
+employees:
+  - full_name: John Doe
+    email: john.doe@acme.com
+    username: jdoe
+  - full_name: Jane Smith
+    email: j.smith@acme.com
+    username: jsmith
+```
+
+Only `full_name` is required. Including `username` ensures that short identifiers like `jdoe` are replaced even when they appear without context.
+
+### structured settings
+
+```yaml
+structured:
+  anchor_field: employee_id       # which column identifies each entity
+  correlated_fields:
+    - email
+    - username
+    - display_name
+    - full_name
+```
+
+See [Section 4](#4-anchor-field-selection-structured-mode) for guidance on anchor field selection.
+
+### exclude_terms
+
+If the NLP layer over-redacts common words (e.g. "Will" being treated as a person name), list them here:
+
+```yaml
+exclude_terms:
+  - May
+  - Will
+  - Mark
+```
+
+### Security note
+
+`~/.pseudoswapper_config.yaml` contains employee names and internal identifiers. Treat it as sensitive:
+- Do not commit it to version control
+- Do not share it alongside redacted files
+- Keep it out of any backup systems that sync to the cloud
+
+---
+
+## 4. Anchor field selection (Structured mode)
+
+The anchor field is the single most important configuration decision for structured mode. Getting it wrong produces output that is internally consistent but factually incorrect — and the AI receiving it cannot detect this.
+
+### What makes a good anchor
+
+| Requirement | Why it matters |
+|---|---|
+| **Unique per entity** | Two employees sharing an anchor value collapse to one token. All their rows become indistinguishable. |
+| **Stable across all rows** | If an anchor value changes mid-dataset (reassigned IDs, name changes), the same person gets multiple tokens. |
+| **Always populated** | Rows with a null anchor are processed independently — their fields are not correlated to any entity. |
+
+### Prefer system-assigned IDs over human-readable names
+
+System-assigned IDs (`employee_id`, `user_id`, `guid`) satisfy all three requirements by design. Human-readable names may not:
+
+- **Not unique:** Two employees named "John Smith" collapse to one token.
+- **Not stable:** Names change (marriage, legal change). IDs don't.
+- **Not always present:** Name fields are sometimes blank; ID fields rarely are.
+
+**When to use a name as anchor:** If your dataset has no system ID and the names are confirmed unique and stable, `full_name` is a reasonable anchor — and has the benefit that `[PERSON_1]` restores directly to the human-readable name.
+
+### Good vs bad anchors
+
+| Column | Verdict | Reason |
+|---|---|---|
+| `employee_id` | Good | System-assigned, unique, stable, always present |
+| `user_guid` | Good | Same as above |
+| `email` | Acceptable | Usually unique; breaks if email is reassigned |
+| `full_name` | Acceptable if unique | Breaks with duplicate names; useful for readable restore output |
+| `department` | Bad | Not unique — many people share a department |
+| `manager_name` | Bad | Not unique, not stable |
+| `first_name` | Bad | Not unique |
+
+### What goes wrong with a bad anchor
+
+If `department` is the anchor, everyone in "Engineering" becomes `[PERSON_1]` and everyone in "Marketing" becomes `[PERSON_2]`. The AI receives a file where all engineers appear to be the same person. The redaction is consistent (no token leaks the original data) but the AI's analysis will be nonsense.
+
+### Auto-detection
+
+If no anchor is configured in YAML and no `--anchor` flag is passed, `pseudoswapper` auto-detects from common column header patterns in this order: `employee_id`, `user_id`, `username`, `full_name`, `name`, `user`, `employee`. If none match, fields are tokenised independently with no cross-row correlation.
+
+### Token restoration and anchor choice
+
+When using an opaque ID as the anchor (e.g. `employee_id = "E001"`), the token `[PERSON_1]` restores to `"E001"`. If you want `[PERSON_1]` to restore to `"John Doe"` in the AI's output, use `full_name` as the anchor instead. List `employee_id` in `correlated_fields` to still replace it in the output.
+
+---
+
+## 5. Running the tool
+
+### Prerequisites
+
+```bash
+# Python 3.12 required
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+python -m spacy download en_core_web_lg
+
+# Create config
+cp pseudoswapper_config.example.yaml ~/.pseudoswapper_config.yaml
+# Edit with your company terms and employees
+```
+
+### Document mode
+
+```bash
+pseudoswapper document report.txt
+# → writes report.redacted.txt alongside the input file
+
+pseudoswapper document email_thread.txt
+# → writes email_thread.redacted.txt
+```
+
+Output is always written alongside the input file with a `.redacted` suffix inserted before the file extension: `name.txt` → `name.redacted.txt`.
+
+### Structured mode
+
+```bash
+# Anchor field from config
+pseudoswapper structured access_logs.csv
+
+# Override anchor field on the CLI
+pseudoswapper structured employees.csv --anchor employee_id
+pseudoswapper structured data.json --anchor user_id
+pseudoswapper structured report.xlsx --anchor full_name
+```
+
+Output follows the same naming convention: `employees.csv` → `employees.redacted.csv`.
+
+### Verifying the output
+
+Before sharing the redacted file, open it and confirm:
+
+- No original names, emails, or identifiers are visible
+- Tokens are present and look like `[PERSON_1]`, `[EMAIL_PERSON_1]` etc.
+- The structure of the file is intact (columns, rows, JSON shape)
+
+The redacted file is what you share with the AI assistant.
+
+---
+
+## 6. Restoring AI output
+
+### The workflow
+
+```
+1. pseudoswapper document report.txt        → report.redacted.txt
+2. Share report.redacted.txt with AI
+3. AI returns analysis.txt (contains tokens like [PERSON_1])
+4. Save AI output to a file
+5. pseudoswapper restore analysis.txt       → analysis.restored.txt
+```
+
+### Session pointer file
+
+When you run `pseudoswapper document` or `pseudoswapper structured`, a file named `.pseudoswapper_session` is written to your current working directory. This file contains the path to the private temp directory where the token mapping is stored.
+
+**You must run `pseudoswapper restore` from the same directory** as the one where you ran the redact command, so the restore process can find the `.pseudoswapper_session` pointer.
+
+The pointer file itself contains no sensitive data — it is just a path.
+
+### Auto-cleanup
+
+After a successful restore, the session (temp dir + pointer file) is deleted automatically. You do not need to clean up manually. A completed redact → restore cycle leaves no artifacts in your working directory.
+
+### If restore fails
+
+If `pseudoswapper restore` exits with an error, the session is preserved so you can retry. Common causes:
+
+- The AI output file path is wrong (check the path argument)
+- You are in the wrong directory (`.pseudoswapper_session` not found)
+
+Fix the issue and run `pseudoswapper restore` again.
+
+### Abandoning a session
+
+If you decide not to restore, or if the session is stuck, run:
+
+```bash
+pseudoswapper clear-session
+```
+
+This deletes the temp dir and pointer file. The original values are gone — there is no recovery path after clearing a session.
+
+### If the session was lost
+
+If the system rebooted, or the temp dir was deleted, or you moved to a different directory, the session cannot be recovered. The redacted file's tokens cannot be reversed. You will need to re-run the redact command on the original file.
+
+### Token tolerance
+
+`pseudoswapper restore` handles common AI reformatting:
+
+- Case changes: `[person_1]`, `[PERSON_1]`, `[Person_1]` all restore correctly
+- Markdown wrapping: `` `[PERSON_1]` `` and `**[PERSON_1]**` restore correctly
+
+If the AI has substantially rewritten a token (e.g. expanding `[PERSON_1]` to `Person 1`), that occurrence will not be restored automatically. Scan the restored output for any remaining tokens.
+
+---
+
+## 7. Known limitations
+
+### L1 — NLP may miss names in non-prose contexts
+
+spaCy's named entity recognition is trained on prose. It is less reliable in tables, headers, log lines, and structured formats.
+
+**Impact:** A name in a CSV cell or log timestamp prefix may not be detected.
+
+**Mitigation:** Add known employees to the `employees` list in your YAML config. Pre-registered employees are detected by exact-match before NLP runs, so they are always found regardless of context. This is the primary safety net for high-value individuals.
+
+### L2 — Emails and names are not linked in Document mode
+
+In Document mode, `john.doe@acme.com` becomes `[EMAIL_1]` and `John Doe` becomes `[PERSON_1]`. These tokens carry no linkage information. The AI will not automatically know the email belongs to the person.
+
+**Mitigation:** Use Structured mode with `email` in `correlated_fields`. In Structured mode, an email in the same row as the anchor entity becomes `[EMAIL_PERSON_1]` — the token itself signals the linkage.
+
+### L3 — Composite identity is not supported
+
+If an entity is uniquely identified only by a combination of two fields (e.g. `tenant_id` + `user_id`), the tool cannot handle this in v1. Using either field alone as the anchor may cause different entities to collapse to the same token if the field is not globally unique.
+
+**Mitigation:** If possible, create a derived unique key (e.g. concatenate the two fields into a single column) before running structured mode.
+
+### L4 — The tool cannot validate anchor field quality
+
+`pseudoswapper` assumes the anchor field is unique, stable, and always populated. It cannot verify this. If the anchor field has duplicate values for different people, those people will share a token — their data becomes indistinguishable in the redacted output.
+
+**Mitigation:** Choose the anchor carefully (see [Section 4](#4-anchor-field-selection-structured-mode)). System-assigned IDs are the safest choice.
+
+### L5 — Opaque ID anchors restore to the ID, not the name
+
+When an opaque ID (`employee_id = "E001"`) is the anchor, the token `[PERSON_1]` restores to `"E001"`. The full name is not preserved as the canonical restored value.
+
+**Mitigation:** Use `full_name` as the anchor if you want `[PERSON_1]` to restore to the human-readable name. Or add `employee_id` to `correlated_fields` and accept that restored output will contain IDs alongside the anchor token's canonical value.
+
+### L6 — NLP false positives (common words redacted as names)
+
+spaCy may interpret common English words as person names — "Will", "May", "Mark", "Grace" — especially in short sentences without context.
+
+**Impact:** Over-redaction: words that are not actually names are replaced with person tokens.
+
+**Mitigation:** Add the affected terms to `exclude_terms` in your YAML config.
+
+### L7 — No binary file support in v1
+
+`.docx`, `.pdf`, and other binary formats are not supported. Only `.txt` (and similar plain text) files work in Document mode.
+
+**Mitigation:** Convert to `.txt` before redacting. In macOS:
+
+```bash
+# .docx → .txt via pandoc
+pandoc -t plain report.docx -o report.txt
+```
+
+---
+
+## 8. Security notes
+
+### The redacted file is safe to share
+
+The redacted file contains only tokens. Even if the AI assistant's logs or outputs are intercepted, no original sensitive values are exposed. The mapping that decodes the tokens never leaves your machine.
+
+### The token mapping is not persistent
+
+The token-to-value mapping exists only in a private temporary directory (`/tmp/...`, mode `0700`, readable only by your OS user). It does not survive a system reboot. If you need to restore AI output after a reboot, re-run the redact command.
+
+### The config file is sensitive
+
+`~/.pseudoswapper_config.yaml` contains employee names, internal project names, and domain names. It is not a mapping file (it contains no tokens), but it does contain the original sensitive definitions.
+
+- Do not commit it to a git repository
+- Do not include it in any cloud backup that might sync to a third party
+- Treat it with the same care as an SSH config or credentials file
+
+### No network calls
+
+`pseudoswapper` makes zero network calls during redact or restore. The NLP model (`en_core_web_lg`) is a local file downloaded once at install time. All processing is offline.
+
+### Terminal session hygiene
+
+If you `echo` a token mapping or print session details in a terminal, that output may be visible in shell history or log files. The tool itself does not print any original values — but be careful with commands you run alongside it.

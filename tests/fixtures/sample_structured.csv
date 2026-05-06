@@ -1,0 +1,6 @@
+employee_id,full_name,email,username,department
+E001,John Doe,john.doe@acme.com,jdoe,Engineering
+E002,Jane Smith,j.smith@acme.com,jsmith,Marketing
+E001,John Doe,john.doe@acme.com,jdoe,Engineering
+E003,Alice Chen,alice.chen@acme.com,achen,Design
+,Unknown Person,unknown@acme.com,unknown,Temp

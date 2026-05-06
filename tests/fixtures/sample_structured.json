@@ -1,0 +1,7 @@
+[
+  {"employee_id": "E001", "full_name": "John Doe", "email": "john.doe@acme.com", "username": "jdoe", "department": "Engineering"},
+  {"employee_id": "E002", "full_name": "Jane Smith", "email": "j.smith@acme.com", "username": "jsmith", "department": "Marketing"},
+  {"employee_id": "E001", "full_name": "John Doe", "email": "john.doe@acme.com", "username": "jdoe", "department": "Engineering"},
+  {"employee_id": "E003", "full_name": "Alice Chen", "email": "alice.chen@acme.com", "username": "achen", "department": "Design"},
+  {"employee_id": null, "full_name": "Unknown Person", "email": "unknown@acme.com", "username": "unknown", "department": "Temp"}
+]

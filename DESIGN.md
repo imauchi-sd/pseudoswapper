@@ -44,7 +44,7 @@ to other users, and does not survive a reboot.
 
 | Event | What happens |
 |---|---|
-| `pseudoswapper redact` succeeds | Temp dir + `session.json` created; `.pseudoswapper_session` written to CWD |
+| `pseudoswapper document` / `pseudoswapper structured` succeeds | Temp dir + `session.json` created; `.pseudoswapper_session` written to CWD |
 | `pseudoswapper restore` succeeds | Temp dir and `.pseudoswapper_session` deleted automatically — no user action required |
 | `pseudoswapper restore` fails | Session preserved; user told to fix the issue and retry, or run `clear-session` |
 | `pseudoswapper clear-session` | Explicit escape hatch: deletes session and pointer file; use when abandoning a session |
@@ -170,12 +170,15 @@ This is the authoritative list of known limitations to carry into USER_GUIDE.md.
 | L5 | AI may reformat tokens in output | Restoration regex fails to match | Fuzzy/case-insensitive restore matching |
 | L6 | NER false positives (common words as names) | Over-redaction | Add `exclude_terms` to YAML config |
 | L7 | No binary file redaction in v1 (no .docx, .pdf) | Users must convert to .txt first | Document conversion step in guide |
+| L8 | Opaque ID anchors restore to the ID, not the person name | `[PERSON_1]` → `"E001"` rather than `"John Doe"` in restored AI output | Use `full_name` as anchor when human-readable restoration is required |
 
 ---
 
 ## User Guide Outline
 
-The USER_GUIDE.md produced alongside the code should cover:
+> `USER_GUIDE.md` has been produced and covers all sections below. This outline is kept as a reference for what the guide must contain.
+
+The USER_GUIDE.md covers:
 
 1. **What this tool does and doesn't do**
    - Local processing guarantee

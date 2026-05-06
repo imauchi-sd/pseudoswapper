@@ -7,9 +7,9 @@ sharing with external AI assistants. All processing happens locally. No sensitiv
 machine. No external API calls are made during redaction or restoration.
 
 The tool has two primary operations:
-- `redact document <file>` / `redact structured <file>` — detects and replaces sensitive data
-  with tokens, holds the mapping in memory
-- `redact restore <file>` — accepts AI output and reverses tokens back to original values
+- `pseudoswapper document <file>` / `pseudoswapper structured <file>` — detects and replaces
+  sensitive data with tokens, holds the mapping in memory
+- `pseudoswapper restore <file>` — accepts AI output and reverses tokens back to original values
 
 ---
 
@@ -95,7 +95,7 @@ correlate fields within each object. Support dot-notation paths in config (e.g. 
 
 ## YAML Configuration File
 
-Location: `~/.redact_config.yaml`
+Location: `~/.pseudoswapper_config.yaml`
 This file persists across sessions — it contains definitions only, never token mappings.
 
 ```yaml
@@ -173,25 +173,50 @@ Document these prominently in USER_GUIDE.md:
    Restoration logic must use fuzzy/case-insensitive matching to catch common variants.
 6. **NER false positives** — Common words that are also names may be over-redacted. YAML can
    explicitly exclude terms if needed (add an `exclude_terms` list to config).
+7. **Opaque ID anchors restore to the ID, not the name** — When an ID field (e.g. `employee_id =
+   "E001"`) is the anchor, `[PERSON_1]` restores to `"E001"`. If human-readable name restoration
+   is needed, use `full_name` as the anchor field instead.
 
 ---
 
 ## Expected File Structure
 
 ```
-redact-tool/
-├── redact.py               # CLI entry point (click)
-├── detector.py             # Detection logic: regex + spaCy + YAML
-├── entity_registry.py      # Session-scoped global entity store
-├── config.py               # YAML config loader
-├── restore.py              # Token reversal with fuzzy match tolerance
-├── modes/
+pseudoswapper/
+├── pyproject.toml
+├── pseudoswapper_config.example.yaml
+├── USER_GUIDE.md
+├── src/pseudoswapper/
 │   ├── __init__.py
-│   ├── document.py         # Document mode processor
-│   └── structured.py       # Structured mode processor (CSV, JSON, XLSX)
-├── requirements.txt
-├── redact_config.example.yaml
-└── USER_GUIDE.md
+│   ├── cli.py                  # Typer entry point — thin layer only
+│   ├── config.py               # YAML config loader, ConfigError, _require helper
+│   ├── session.py              # Temp dir lifecycle, .pseudoswapper_session pointer
+│   ├── entity_registry.py      # In-memory token store, serialisation
+│   ├── recognizers.py          # CompanyTermsRecognizer, EmployeeRecognizer
+│   ├── detector.py             # Presidio AnalyzerEngine wrapper
+│   ├── tokenizer.py            # DetectedEntity → token, person entity model
+│   ├── replacer.py             # Longest-match-first text replacement
+│   ├── restore.py              # Token reversal with fuzzy/case-insensitive match
+│   └── modes/
+│       ├── __init__.py
+│       ├── document.py         # Document mode orchestrator
+│       └── structured.py       # Structured mode (CSV / JSON / XLSX)
+└── tests/
+    ├── conftest.py
+    ├── fixtures/
+    │   ├── sample_document.txt
+    │   ├── sample_structured.csv
+    │   ├── sample_structured.json
+    │   └── sample_structured.xlsx
+    ├── test_config.py
+    ├── test_entity_registry.py
+    ├── test_session.py
+    ├── test_detector.py
+    ├── test_tokenizer.py
+    ├── test_replacer.py
+    ├── test_restore.py
+    ├── test_document.py
+    └── test_structured.py
 ```
 
 ---
@@ -201,7 +226,6 @@ redact-tool/
 ```bash
 # Document mode
 pseudoswapper document report.txt
-pseudoswapper document email_thread.docx
 
 # Structured mode
 pseudoswapper structured access_logs.csv --anchor user_id
@@ -227,12 +251,14 @@ Example: `report.txt` → `report.redacted.txt`
 ## Dependencies
 
 ```
+typer>=0.12
+pyyaml>=6.0
+presidio-analyzer>=2.2
+presidio-anonymizer>=2.2
 spacy>=3.7
 en_core_web_lg          # python -m spacy download en_core_web_lg
-pyyaml>=6.0
 pandas>=2.0
 openpyxl>=3.1           # for .xlsx support via pandas
-click>=8.1
 ```
 
 ---

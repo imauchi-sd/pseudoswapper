@@ -344,14 +344,18 @@ load .pseudoswapper_session → temp session path
 
 ---
 
-### Phase 7 — Final polish `[ ]`
+### Phase 7 — Final polish `[x]`
 
 **Deliverables**
-- `USER_GUIDE.md` — covers: what the tool does, choosing a mode, YAML config setup, anchor field selection, running the tool, restoring AI output, known limitations, security notes (see `DESIGN.md` outline)
+- `USER_GUIDE.md` — 8 sections: what the tool does, mode selection, YAML config setup, anchor field selection (with good/bad anchor table), running the tool, restoring AI output (session lifecycle, token tolerance, clear-session), known limitations (L1–L7), security notes
 - ~~`pseudoswapper config --show` and `pseudoswapper config --edit` commands wired in `cli.py`~~ — done in Phase 1
 - ~~`pseudoswapper clear-session` command wired in `cli.py`~~ — done in Phase 5
-- Error messages reviewed: all `ConfigError`, missing session, and bad file paths produce clear user-facing messages (no stack traces)
-- `README.md` — one-page install + quickstart
+- Error messages reviewed — all `ConfigError`, missing session, and bad file paths produce clean user-facing messages with no stack traces (verified in cli.py)
+- `README.md` — updated: accurate install steps, quick start covering all commands, configuration summary, session lifecycle table, known limitations, pointer to USER_GUIDE.md, development section with test count
+
+**Implementation notes**
+- USER_GUIDE.md includes a documented design note (L5) explaining that opaque-ID anchors (`employee_id = "E001"`) restore `[PERSON_1]` to the ID value, not the full name — and the mitigation (use `full_name` as anchor when human-readable restoration is required). This was discovered during Phase 6 round-trip testing.
+- Error handling in `cli.py` uses a consistent pattern: `ConfigError` is caught at config load; all other exceptions from domain functions are caught generically and emitted on stderr with `err=True`. No raw tracebacks reach the user in normal operation.
 
 ---
 
