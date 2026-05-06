@@ -1,0 +1,42 @@
+# pseudoswapper configuration template
+# Copy this file to ~/.pseudoswapper_config.yaml and fill in your values.
+# SECURITY: This file contains sensitive data (employee names, internal identifiers).
+# Do not commit it to version control.
+
+# Exact-match terms to always redact — highest priority.
+# Use for company names, project names, internal system names, and domains.
+company_terms:
+  - Acme Corporation
+  - Acme Corp
+  - acme.com
+  - Project Nightingale
+  - internal-system-name
+
+# Known employees — pre-registered before file scanning.
+# Guarantees consistent tokenisation even when NLP misses a name.
+# Supports: full_name, email, username (all optional except full_name).
+employees:
+  - full_name: John Doe
+    email: john.doe@acme.com
+    username: jdoe
+  - full_name: Jane Smith
+    email: j.smith@acme.com
+    username: jsmith
+
+# Structured mode settings (CSV, JSON, XLSX).
+structured:
+  # The column that uniquely and stably identifies each entity.
+  # Override with --anchor on the CLI. Comment out to use auto-detection.
+  anchor_field: employee_id
+
+  # Additional columns to correlate to the anchor entity within each row.
+  correlated_fields:
+    - email
+    - username
+    - display_name
+    - full_name
+
+# Terms to exclude from NLP detection (prevents over-redaction of common words).
+# exclude_terms:
+#   - May
+#   - Will
