@@ -1,0 +1,215 @@
+That makes sense I think, consistent with what I am thinking. Please go ahead and start designing 
+   the implementation plan. Don't proceed with any implementation yet                               
+                                                                                                    
+⏺ Here's the implementation plan. I'll cover structure, module responsibilities, data flows, and    
+  phases.                                                                                           
+                                                                                                    
+  ---                                                                                               
+  Project Structure                                                                                 
+                                                                                                    
+  pseudoswapper/
+  ├── pyproject.toml                                                                                
+  ├── pseudoswapper_config.example.yaml   # committed template
+  ├── .gitignore                          # includes .pseudoswapper_session
+  ├── src/                                                                                          
+  │   └── pseudoswapper/
+  │       ├── __init__.py                                                                           
+  │       ├── cli.py                      # Typer entry point — thin layer only
+  │       ├── config.py                   # YAML loader, ConfigError, validation                    
+  │       ├── session.py                  # Temp file lifecycle, .pseudoswapper_session pointer     
+  │       ├── entity_registry.py          # In-memory token store, serialisation                    
+  │       ├── detector.py                 # Presidio AnalyzerEngine wrapper                         
+  │       ├── recognizers.py              # Custom PatternRecognizers from YAML config
+  │       ├── tokenizer.py                # DetectedEntity → token assignment, person entity model  
+  │       ├── replacer.py                 # Longest-match-first text replacement
+  │       ├── restore.py                  # Token reversal, fuzzy match                             
+  │       └── modes/                                                                                
+  │           ├── __init__.py                                                                       
+  │           ├── document.py             # Document mode orchestrator                              
+  │           └── structured.py          # Structured mode (CSV / JSON / XLSX)
+  └── tests/                                                                                        
+      ├── __init__.py
+      ├── conftest.py                     # Shared config builders                                  
+      ├── fixtures/                                                                                 
+      │   ├── sample_document.txt         # Fake-but-realistic prose with PII
+      │   ├── sample_structured.csv                                                                 
+      │   ├── sample_structured.json
+      │   └── sample_structured.xlsx                                                                
+      ├── test_entity_registry.py
+      ├── test_detector.py
+      ├── test_tokenizer.py                                                                         
+      ├── test_replacer.py
+      ├── test_restore.py                                                                           
+      ├── test_document.py
+      └── test_structured.py
+                                                                                                    
+  ---
+  Module Responsibilities                                                                           
+                  
+  ┌─────────────────────┬────────────────────────────────────────────────────────────────────────┐
+  │       Module        │                             Responsibility                             │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ cli.py              │ Command definitions only. Loads config, finds/creates session,         │
+  │                     │ resolves paths, calls domain functions, echoes output path.            │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤  
+  │ config.py           │ Loads and validates ~/.pseudoswapper_config.yaml. Raises ConfigError   │
+  │                     │ on missing required fields.                                            │  
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │                     │ Creates a temp dir via tempfile.mkdtemp() (mode 0700, user-only).      │  
+  │ session.py          │ Writes session JSON there. Writes a .pseudoswapper_session pointer     │  
+  │                     │ file in CWD so the restore command can find it. Cleans up on restore.  │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤  
+  │ entity_registry.py  │ In-memory dict of value → token. Counters per entity type. to_dict() / │
+  │                     │  from_dict() for serialisation to the session file.                    │  
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │                     │ Wraps Presidio AnalyzerEngine. Initialises with standard recognizers + │  
+  │ detector.py         │  custom ones from config. analyze(text) returns list[DetectedEntity]   │  
+  │                     │ with type, original text, and character offsets.                       │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤  
+  │                     │ Two PatternRecognizer subclasses built from YAML:                      │
+  │ recognizers.py      │ CompanyTermsRecognizer (exact-match on company_terms list) and         │  
+  │                     │ EmployeeRecognizer (exact-match on employee names and usernames).      │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤  
+  │                     │ Takes list[DetectedEntity] + raw text → dict[original_text → token].   │
+  │ tokenizer.py        │ Owns the person entity model: on first encounter of a full name,       │  
+  │                     │ registers first/last surface forms too. Owns correlated email logic    │
+  │                     │ for structured mode.                                                   │  
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │                     │ Takes text + token map → redacted text. Sorts replacements             │
+  │ replacer.py         │ longest-first before applying so full names are caught before their    │  
+  │                     │ parts.                                                                 │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤  
+  │                     │ Finds all [TOKEN_N] patterns in text via regex. Looks up each in the   │
+  │ restore.py          │ entity registry's reverse map. Applies case-insensitive matching to    │  
+  │                     │ tolerate AI reformatting.                                              │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤  
+  │ modes/document.py   │ Orchestrates document mode: read file → pre-register YAML employees →  │
+  │                     │ detect → tokenize → replace → write .redacted output → save session.   │  
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │                     │ Orchestrates structured mode: reads CSV/JSON/XLSX into a DataFrame or  │  
+  │ modes/structured.py │ dict → determines anchor field → processes row by row (anchor lookup,  │  
+  │                     │ correlated field registration) → writes .redacted output → saves       │
+  │                     │ session.                                                               │  
+  └─────────────────────┴────────────────────────────────────────────────────────────────────────┘
+
+  ---
+  Token Format
+                                                                                                    
+  ┌────────────────────────────────┬──────────────────┬────────────────────────────────┐
+  │         Detected type          │      Token       │             Notes              │            
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤
+  │ Full name                      │ [PERSON_1]       │ Canonical form                 │
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤
+  │ First name alone               │ [PERSON_1_FIRST] │ Surface form of same entity    │            
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤
+  │ Last name alone                │ [PERSON_1_LAST]  │ Surface form of same entity    │            
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤            
+  │ Email (document mode)          │ [EMAIL_1]        │ Independent, no person linkage │
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤            
+  │ Email (structured, correlated) │ [EMAIL_PERSON_1] │ Signals linkage to PERSON_1    │
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤            
+  │ Phone                          │ [PHONE_1]        │                                │
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤            
+  │ IP address                     │ [IP_1]           │                                │
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤
+  │ Domain                         │ [DOMAIN_1]       │                                │
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤            
+  │ URL                            │ [URL_1]          │                                │
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤            
+  │ Organisation (NLP)             │ [ORG_1]          │                                │
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤            
+  │ Location (NLP)                 │ [LOC_1]          │                                │
+  ├────────────────────────────────┼──────────────────┼────────────────────────────────┤            
+  │ YAML company term              │ [COMPANY_1]      │ Highest-priority recognizer    │
+  └────────────────────────────────┴──────────────────┴────────────────────────────────┘            
+  
+  ---                                                                                               
+  Session Persistence
+                     
+  The in-memory mapping must survive between pseudoswapper document and pseudoswapper restore (two
+  separate processes). Mechanism:                                                                   
+  
+  1. pseudoswapper document file.txt creates a temp dir (tempfile.mkdtemp(), mode 0700) and writes  
+  session.json there. It writes a one-line .pseudoswapper_session pointer file in CWD containing the
+   session path.                                                                                    
+  2. pseudoswapper restore ai_output.txt reads .pseudoswapper_session from CWD, loads session.json,
+  deserialises the entity registry, runs restore.                                                   
+  3. After successful restore, .pseudoswapper_session and the temp dir are deleted.
+  4. If session is lost (terminal closed, etc.) — user must do manual replacement. This is a        
+  documented limitation.                                                                            
+                                                                                                    
+  .pseudoswapper_session is added to .gitignore.                                                    
+                  
+  ---                                                                                               
+  Data Flows      
+
+  Document mode
+
+  read file
+    → pre-register YAML employees into EntityRegistry                                               
+    → Detector.analyze(text)              # Presidio → list[DetectedEntity]
+    → Tokenizer.assign(entities, text)    # → dict{original → [TOKEN_N]}                            
+    → Replacer.replace(text, token_map)   # longest-match-first                                     
+    → write file.redacted.txt                                                                       
+    → Session.save()                      # EntityRegistry → temp JSON                              
+    → write .pseudoswapper_session                                                                  
+                                                                                                    
+  Structured mode                                                                                   
+                  
+  read file (CSV/JSON/XLSX) → DataFrame/list[dict]
+    → pre-register YAML employees                                                                   
+    → determine anchor field (CLI arg → YAML config → auto-detect)                                  
+    → for each row:                                                                                 
+        anchor_value = row[anchor_field]                                                            
+        if anchor_value in registry:
+            entity = registry.lookup(anchor_value)                                                  
+        else:                                                                                       
+            entity = register new PERSON entity for anchor_value
+            register correlated fields (email → EMAIL_PERSON_N, etc.)                               
+        replace all field values in row with tokens                                                 
+    → write file.redacted.csv (or .json / .xlsx)                                                    
+    → Session.save()                                                                                
+    → write .pseudoswapper_session                                                                  
+                                                                                                    
+  Restore
+                                                                                                    
+  load .pseudoswapper_session → temp session path
+    → Session.load() → EntityRegistry (with reverse map)
+    → find all [TOKEN_N] patterns in AI output text (regex)                                         
+    → for each token: fuzzy case-insensitive lookup in reverse map                                  
+    → replace tokens with originals                                                                 
+    → write file.restored.txt                                                                       
+    → delete session + .pseudoswapper_session                                                       
+                                                                                                    
+  ---
+  Implementation Phases                                                                             
+                  
+  Phase: 1 — Scaffold                                                                            
+  Deliverables: pyproject.toml, package skeleton, CLI stubs (all commands defined, not wired),   
+    config.py with ConfigError, example YAML                                                        
+  Tests: Config loading, error on missing fields                                                 
+  ────────────────────────────────────────                                                          
+  Phase: 2 — Entity registry + session                                                              
+  Deliverables: entity_registry.py (token assignment, counters, serialisation), session.py (temp 
+  dir,                                                                                              
+    pointer file, load/save/clear)                                                                  
+  Tests: Token consistency for same input, round-trip serialisation                              
+  ────────────────────────────────────────                                                          
+  Phase: 3 — Detection layer                                                                     
+  Deliverables: detector.py (Presidio AnalyzerEngine wrapper), recognizers.py                       
+    (CompanyTermsRecognizer, EmployeeRecognizer)                                                 
+  Tests: Detection of emails/phones/IPs/names/company terms in sample text                          
+  ────────────────────────────────────────                                                       
+  Phase: 4 — Tokenizer + replacer                                                                
+  Deliverables: tokenizer.py (entity → token, person surface forms), replacer.py                 
+    (longest-match-first)                                                                       
+  Tests: Correct token assignment, full name before first/last, consistent across occurrences       
+  ────────────────────────────────────────                                                      
+  Phase: 5 — Document mode + restore                                                                
+  Deliverables: modes/document.py, restore.py (fuzzy reverse), wire document and restore commands in
+                                                                                                    
+    CLI                                                                                         
+  Tests: Full round-trip: redact fixture → restore → matches original                               
+  ────────────────────────────────────────                                                      
+  Phase: 6 — Structured mode
+  Deliverables: modes/structured.py (CSV/JSON/XLSX), anchor auto-detection, correlated email tokens,

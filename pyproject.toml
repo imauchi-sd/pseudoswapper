@@ -1,12 +1,12 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "pseudoswapper"
 version = "0.1.0"
 description = "Local CLI tool for tokenising sensitive data before sharing with AI assistants"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 dependencies = [
     "typer>=0.12",
     "pyyaml>=6.0",

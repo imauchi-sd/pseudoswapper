@@ -133,7 +133,7 @@ load .pseudoswapper_session → temp session path
 
 ## Implementation Phases
 
-### Phase 1 — Scaffold `[ ]`
+### Phase 1 — Scaffold `[x]`
 
 **Deliverables**
 - `pyproject.toml` — package metadata, dependencies, `[project.scripts]` entry point, `[dev]` extras
@@ -146,9 +146,16 @@ load .pseudoswapper_session → temp session path
 - `tests/test_config.py` — config loading and `ConfigError` on missing required fields
 
 **Tests**
-- `load_config()` returns expected dict for valid YAML
-- `ConfigError` raised when required fields are absent
-- `default_config()` returns a valid config (no error when loaded)
+- `load_config()` returns expected dict for valid YAML — PASS
+- `ConfigError` raised when required fields are absent — PASS
+- `default_config()` returns a valid config (no error when loaded) — PASS
+- 12 tests total, all passing
+
+**Implementation notes**
+- `pyproject.toml` build backend corrected from `setuptools.backends.legacy:build` to `setuptools.build_meta` (the former requires setuptools 68+ with a newer calling convention that pip 26 on the system couldn't resolve)
+- `requires-python` relaxed from `>=3.11` to `>=3.9` to match the system Python
+- Heavy dependencies (`spacy`, `presidio-analyzer`, `presidio-anonymizer`, `pandas`, `openpyxl`) are declared in `pyproject.toml` but were not installed for Phase 1 — they are not needed until Phase 3+. Only `typer`, `pyyaml`, and `pytest` were installed.
+- Python environment subsequently resolved: Python 3.12 installed via Homebrew, project `.venv` created at `.venv/` using `python3.12 -m venv .venv`. All future `pip install` commands run inside this venv.
 
 ---
 
@@ -180,6 +187,8 @@ load .pseudoswapper_session → temp session path
 ---
 
 ### Phase 3 — Detection layer `[ ]`
+
+> **Python environment:** resolved. Python 3.12 installed via Homebrew (`/opt/homebrew/bin/python3.12`). Project `.venv` created with 3.12 and activated. `pip install -e ".[dev]"` will install spaCy and Presidio correctly from within the venv.
 
 **Deliverables**
 - `src/pseudoswapper/recognizers.py`

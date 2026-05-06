@@ -26,11 +26,13 @@ Uses an anchor field (a unique identifier column like `employee_id`) to correlat
 
 ## Install
 
-Requires Python 3.11+.
+Requires Python 3.12 (spaCy's `thinc` dependency hard-requires 3.10+; 3.12 is recommended for stable wheel availability across all dependencies).
 
 ```bash
-git clone https://github.com/<your-org>/pseudoswapper.git
+git clone https://github.com/imauchi-sd/pseudoswapper.git
 cd pseudoswapper
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
 python -m spacy download en_core_web_lg
 ```
@@ -121,3 +123,9 @@ python3 -m pytest
 ```
 
 Project layout and phase-by-phase build plan: [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+
+Run tests with:
+
+```bash
+python3 -m pytest
+```

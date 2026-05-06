@@ -1,0 +1,69 @@
+import os
+import subprocess
+from pathlib import Path
+from typing import Optional
+
+import typer
+
+from pseudoswapper.config import DEFAULT_CONFIG_PATH, ConfigError, load_config
+
+app = typer.Typer(
+    name="pseudoswapper",
+    help="Local sensitive data tokenisation tool. No data leaves your machine.",
+    no_args_is_help=True,
+)
+
+
+@app.command()
+def document(
+    file: Path = typer.Argument(..., exists=True, readable=True, help="Prose file to redact"),
+) -> None:
+    """Redact sensitive data from a prose document (txt, email, report)."""
+    raise NotImplementedError
+
+
+@app.command()
+def structured(
+    file: Path = typer.Argument(..., exists=True, readable=True, help="CSV, JSON, or XLSX file to redact"),
+    anchor: Optional[str] = typer.Option(None, "--anchor", "-a", help="Column to use as entity anchor"),
+) -> None:
+    """Redact sensitive data from a structured file (CSV, JSON, XLSX)."""
+    raise NotImplementedError
+
+
+@app.command()
+def restore(
+    file: Path = typer.Argument(..., exists=True, readable=True, help="AI output file to restore"),
+) -> None:
+    """Restore original values in AI output using the current session."""
+    raise NotImplementedError
+
+
+@app.command(name="clear-session")
+def clear_session() -> None:
+    """Abandon the current session and delete all session artifacts."""
+    raise NotImplementedError
+
+
+@app.command(name="config")
+def config_cmd(
+    show: bool = typer.Option(False, "--show", help="Print the active config"),
+    edit: bool = typer.Option(False, "--edit", help="Open config in $EDITOR"),
+) -> None:
+    """View or edit the pseudoswapper config file."""
+    if not show and not edit:
+        typer.echo("Use --show to print config or --edit to open it in $EDITOR.")
+        raise typer.Exit(1)
+
+    if show:
+        try:
+            config = load_config()
+            import yaml
+            typer.echo(yaml.dump(config, default_flow_style=False))
+        except ConfigError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+
+    if edit:
+        editor = os.environ.get("EDITOR", "nano")
+        subprocess.run([editor, str(DEFAULT_CONFIG_PATH)])
