@@ -159,7 +159,7 @@ load .pseudoswapper_session → temp session path
 
 ---
 
-### Phase 2 — Entity registry + session `[ ]`
+### Phase 2 — Entity registry + session `[x]`
 
 **Deliverables**
 - `src/pseudoswapper/entity_registry.py`
@@ -167,10 +167,12 @@ load .pseudoswapper_session → temp session path
   - `register(value, entity_type)` → token string
   - `lookup(value)` → token or `None`
   - `reverse_lookup(token)` → original value or `None`
+  - `register_alias(alias, token)` — maps surface forms (first/last name) to an existing token without incrementing the counter
   - `to_dict()` / `from_dict()` for serialisation
 - `src/pseudoswapper/session.py`
   - `create_session(registry, cwd)` — mkdtemp(mode=0700), write `session.json`, write `.pseudoswapper_session`
   - `load_session(cwd)` → `EntityRegistry`
+  - `save_session(registry, cwd)` — overwrites session.json in the existing temp dir (used after redact updates the registry mid-session)
   - `clear_session(cwd)` — deletes temp dir + pointer file
   - `session_exists(cwd)` → bool
 - `tests/test_entity_registry.py`
@@ -179,21 +181,31 @@ load .pseudoswapper_session → temp session path
 **Tests**
 - Same input value always returns the same token within a session
 - Counters increment correctly per entity type
-- Round-trip: `to_dict()` → `from_dict()` preserves all mappings
+- Counters are independent across entity types
+- Round-trip: `to_dict()` → `from_dict()` preserves all mappings and counter state
 - `create_session` → `load_session` round-trip produces equivalent registry
+- Temp dir created with mode 0700 (no group/other read permissions)
+- `save_session` updates an existing session without creating a new one
 - `clear_session` removes both temp dir and pointer file
 - `session_exists` returns `False` after clear
+- `clear_session` is a no-op when no session exists (no error raised)
+- `load_session` raises `FileNotFoundError` with a descriptive message when no pointer or temp dir
+- 22 tests total, all passing
+
+**Implementation notes**
+- `register_alias` was added beyond the original spec to support the person entity model (Phase 4). The tokenizer calls `register_alias("John", "[PERSON_1_FIRST]")` and `register_alias("Doe", "[PERSON_1_LAST]")` after registering a full name — the surface-form token strings are distinct from the canonical token, but no counter is consumed for them.
+- `save_session` was added (also beyond original spec) to support the case where a redact command needs to update the registry after creation (e.g. structured mode processes rows incrementally).
 
 ---
 
-### Phase 3 — Detection layer `[ ]`
+### Phase 3 — Detection layer `[x]`
 
-> **Python environment:** resolved. Python 3.12 installed via Homebrew (`/opt/homebrew/bin/python3.12`). Project `.venv` created with 3.12 and activated. `pip install -e ".[dev]"` will install spaCy and Presidio correctly from within the venv.
+> **Python environment:** resolved. Python 3.12 installed via Homebrew (`/opt/homebrew/bin/python3.12`). Project `.venv` created with 3.12 and activated. `pip install -e ".[dev]"` installs spaCy and Presidio. `en_core_web_lg` downloaded separately via `python -m spacy download en_core_web_lg`.
 
 **Deliverables**
 - `src/pseudoswapper/recognizers.py`
-  - `CompanyTermsRecognizer` — Presidio `PatternRecognizer` for `company_terms` list (exact-match, highest priority)
-  - `EmployeeRecognizer` — Presidio `PatternRecognizer` for employee full names and usernames from config
+  - `CompanyTermsRecognizer` — Presidio `PatternRecognizer` for `company_terms` list (exact-match, score 0.99)
+  - `EmployeeRecognizer` — Presidio `PatternRecognizer` for employee full names and usernames (score 0.95)
 - `src/pseudoswapper/detector.py`
   - `Detector(config)` — initialises Presidio `AnalyzerEngine` with standard recognizers + custom ones
   - `analyze(text)` → `list[DetectedEntity]` (type, span, original text)
@@ -208,17 +220,26 @@ load .pseudoswapper_session → temp session path
 - Company terms from config detected
 - Employee names from config detected
 - Overlapping spans handled (no double-detection)
+- Excluded terms skipped
+- Detected entity span text matches character offsets in original
+- 10 tests total, all passing
+
+**Implementation notes**
+- Both recognizers override `analyze()` with `re.compile(re.escape(term), re.IGNORECASE)` rather than relying on Presidio's built-in deny-list logic, which was unreliable for exact-match use.
+- Overlap deduplication: results sorted by `(score, span_length)` descending; first result to claim a character position wins. This ensures high-confidence custom recognizers beat lower-confidence NLP results.
+- Presidio entity type names are mapped to internal token-type names in `_ENTITY_TYPE_MAP` (e.g. `EMAIL_ADDRESS` → `EMAIL`, `ORGANIZATION` → `ORG`).
+- `exclude_terms` are stored lowercase in a set and checked against `span_text.lower()` after deduplication.
 
 ---
 
-### Phase 4 — Tokenizer + replacer `[ ]`
+### Phase 4 — Tokenizer + replacer `[x]`
 
 **Deliverables**
 - `src/pseudoswapper/tokenizer.py`
   - `Tokenizer(registry)` — takes `EntityRegistry` as dependency
-  - `assign(entities, text)` → `dict[str, str]` (original → token)
+  - `assign(entities)` → `dict[str, str]` (original → token)
   - Person entity model: on first full-name encounter, registers `[PERSON_N]`, `[PERSON_N_FIRST]`, `[PERSON_N_LAST]`
-  - Correlated email logic for structured mode: `assign_correlated(email, person_token_n)`
+  - Correlated email logic for structured mode: `assign_correlated(email, person_n)`
 - `src/pseudoswapper/replacer.py`
   - `replace(text, token_map)` → redacted text
   - Sorts replacements by length descending before applying (longest-match-first)
@@ -231,16 +252,25 @@ load .pseudoswapper_session → temp session path
 - Same full name on second call returns same token (no new counter increment)
 - First name alone (without prior full name) registers as independent `[PERSON_N]`
 - Entity type routing: email → `[EMAIL_N]`, phone → `[PHONE_N]`, etc.
+- `assign_correlated` registers email as `[EMAIL_PERSON_N]`
+- 12 tests total, all passing
 
 **Tests (replacer)**
 - Full name replaced before first name when both appear in text
 - All occurrences of a value are replaced (not just first)
-- Values with regex special characters replaced correctly
+- Values with regex special characters replaced correctly (dots, parens, `+`)
 - Original text unchanged when token map is empty
+- 9 tests total, all passing
+
+**Implementation notes**
+- Surface-form tokens (`[PERSON_N_FIRST]`, `[PERSON_N_LAST]`) are derived from the canonical token using `base = token[:-1]` (strips trailing `]`), then `f"{base}_FIRST]"`. This avoids parsing the counter number.
+- Surface forms are only registered if the name string is not already in the registry. This handles cases where "John" was seen independently before "John Doe" appeared.
+- `replacer.replace()` builds a single compiled regex from all keys, so replacement is a single pass — no risk of a token being re-matched as a value.
+- `assign_correlated` uses `register_alias` rather than `register`, so no counter is consumed for correlated emails.
 
 ---
 
-### Phase 5 — Document mode + restore `[ ]`
+### Phase 5 — Document mode + restore `[x]`
 
 **Deliverables**
 - `src/pseudoswapper/modes/document.py` — full orchestration (see data flow above)
@@ -248,25 +278,44 @@ load .pseudoswapper_session → temp session path
   - `restore(text, registry)` → restored text
   - Regex to find all `[TOKEN_N]` and `[TOKEN_N_SUFFIX]` patterns
   - Case-insensitive reverse lookup
-- Wire `document` and `restore` commands in `cli.py` (replace `NotImplementedError`)
+- Wire `document`, `restore`, and `clear-session` commands in `cli.py` (replace `NotImplementedError`)
 - `tests/test_document.py`
 - `tests/test_restore.py`
 
 **Tests (document mode)**
-- Output file written with `.redacted` suffix alongside input
-- All PII in sample fixture replaced with tokens
-- YAML employee list pre-registered (token consistent even if NER misses the name)
-- Session file created after redact
+- Output file written with `.redacted` suffix alongside input, in same directory as input
+- YAML company terms replaced with `[COMPANY_N]` tokens
+- YAML employee full names replaced with `[PERSON_N]` tokens
+- YAML employee usernames replaced (pre-registered as alias to same person token)
+- Email addresses replaced with `[EMAIL_N]` tokens
+- Session created after redact
+- Same person token emitted for all occurrences of a name
+- Two distinct employees get distinct person tokens
+- Session registry contains all detected values after redact
+- Full sample fixture produces no known PII in output
+- 11 tests total, all passing
 
 **Tests (restore)**
 - All tokens replaced with originals
-- Case-variant tokens restored (`[person_1]`, `[PERSON_1]` both match)
-- Tokens wrapped in markdown (`` `[PERSON_1]` ``) restored correctly
+- Unknown tokens left in place (not crashed)
+- Case-variant tokens restored (`[person_1]`, `[PERSON_1]`, `[Person_1]` all match)
+- Tokens wrapped in backticks and bold markdown restored correctly
+- Multiple occurrences of same token all restored
+- Surface-form tokens (`[PERSON_N_FIRST]`, `[PERSON_N_LAST]`) restored correctly
+- Output file written with `.restored` suffix
 - Session deleted after successful restore
-- Session preserved after failed restore
+- Session preserved when no session exists (raises `FileNotFoundError`)
+- 12 tests total, all passing
 
 **Integration (round-trip)**
-- `document(sample_document.txt)` → `restore(output)` → matches all original PII values
+- `redact_document()` → `restore_file()` → original PII values present in restored text — PASS
+
+**Implementation notes**
+- Employee pre-registration calls `tokenizer._assign_person(full_name)` to get the canonical token, then calls `registry.register_alias(username, token)` to link the username to the same entity.
+- `document.py` calls `save_session` if a session already exists (idempotent re-run), `create_session` otherwise.
+- `restore()` builds a `{token.upper(): original}` dict from the registry's reverse map before the regex sub, so a single dict lookup handles all case variants from AI output.
+- Token pattern: `\[[^\[\]\s]+\]` with `IGNORECASE` — matches any bracket content without spaces or nested brackets, tolerating AI markdown reformatting.
+- `clear-session` command wired in Phase 5 (moved forward from Phase 7 deliverables). `config --show` and `config --edit` were already wired in Phase 1.
 
 ---
 
@@ -299,8 +348,8 @@ load .pseudoswapper_session → temp session path
 
 **Deliverables**
 - `USER_GUIDE.md` — covers: what the tool does, choosing a mode, YAML config setup, anchor field selection, running the tool, restoring AI output, known limitations, security notes (see `DESIGN.md` outline)
-- `pseudoswapper config --show` and `pseudoswapper config --edit` commands wired in `cli.py`
-- `pseudoswapper clear-session` command wired in `cli.py`
+- ~~`pseudoswapper config --show` and `pseudoswapper config --edit` commands wired in `cli.py`~~ — done in Phase 1
+- ~~`pseudoswapper clear-session` command wired in `cli.py`~~ — done in Phase 5
 - Error messages reviewed: all `ConfigError`, missing session, and bad file paths produce clear user-facing messages (no stack traces)
 - `README.md` — one-page install + quickstart
 

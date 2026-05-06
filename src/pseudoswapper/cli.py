@@ -19,7 +19,20 @@ def document(
     file: Path = typer.Argument(..., exists=True, readable=True, help="Prose file to redact"),
 ) -> None:
     """Redact sensitive data from a prose document (txt, email, report)."""
-    raise NotImplementedError
+    try:
+        config = load_config()
+    except ConfigError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    from pseudoswapper.modes.document import redact_document
+    try:
+        out = redact_document(file, config, Path.cwd())
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Redacted: {out}")
 
 
 @app.command()
@@ -36,13 +49,25 @@ def restore(
     file: Path = typer.Argument(..., exists=True, readable=True, help="AI output file to restore"),
 ) -> None:
     """Restore original values in AI output using the current session."""
-    raise NotImplementedError
+    from pseudoswapper.restore import restore_file
+    try:
+        out = restore_file(file, Path.cwd())
+    except FileNotFoundError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Restored: {out}")
 
 
 @app.command(name="clear-session")
-def clear_session() -> None:
+def clear_session_cmd() -> None:
     """Abandon the current session and delete all session artifacts."""
-    raise NotImplementedError
+    from pseudoswapper.session import clear_session
+    clear_session(Path.cwd())
+    typer.echo("Session cleared.")
 
 
 @app.command(name="config")
