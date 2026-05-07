@@ -31,3 +31,9 @@ htmlcov/
 # IDE
 .vscode/
 .idea/
+
+# Claude Code session settings — machine-specific paths
+.claude/
+
+# Development scaffolding — not part of the public project
+doc-share/
