@@ -56,11 +56,15 @@ pseudoswapper document report.txt
 pseudoswapper document            # → prompts file selection from work directory
 
 # Redact a structured file (anchor auto-detected or from config)
+# An interactive prompt lists columns and asks which to force-tokenize (Enter to skip)
 pseudoswapper structured employees.csv
 pseudoswapper structured          # → prompts selection of .csv/.json/.xlsx files
 
 # Override the anchor field on the CLI
 pseudoswapper structured access_logs.csv --anchor user_id
+
+# Force-tokenize specific columns, bypassing NER (repeatable; skips interactive prompt)
+pseudoswapper structured employees.xlsx --force-fields "Last name, First name" --force-fields "Email"
 
 # Supply an employee roster per-invocation (both modes)
 pseudoswapper document report.txt --employees-csv ~/company_employees.csv
@@ -95,6 +99,7 @@ pseudoswapper clear-session
 - **`exclude_terms`** — words to exclude from NLP detection (prevents over-redaction of common names)
 - **`structured.anchor_field`** — default anchor column for structured mode
 - **`structured.correlated_fields`** — columns to correlate to the anchor entity per row
+- **`structured.force_fields`** — columns to always tokenize unconditionally, bypassing NLP (useful for name columns with non-Western names or non-standard formatting)
 
 You can also pass a CSV per-invocation with `--employees-csv` on any redact command — this takes priority over the config key.
 
@@ -128,7 +133,7 @@ Run `pseudoswapper restore` from the same directory where you ran the redact com
 
 ## Known limitations
 
-- spaCy NER may miss names in non-prose contexts (log lines, headers, tables). Mitigate by listing known employees in the config.
+- spaCy NER may miss names in non-prose contexts (log lines, headers, tables). Mitigate by listing known employees in the config or using `force_fields` in structured mode to guarantee tokenization of specific columns.
 - Email-to-name inference is not attempted in Document mode. Use Structured mode with an anchor field for correlated data.
 - Single anchor field only — composite identity (e.g. `tenant_id` + `user_id`) is not supported in v1.
 - `.docx` and `.pdf` are not supported — convert to `.txt` first.

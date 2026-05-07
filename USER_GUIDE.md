@@ -164,7 +164,12 @@ structured:
     - username
     - display_name
     - full_name
+  force_fields:                   # columns to always tokenize, bypassing NER
+    - "Last name, First name"
+    - department_email
 ```
+
+`force_fields` is optional. When set, every non-empty cell in those columns is tokenized unconditionally — no NLP detection is run on them. Use this for name or email columns where spaCy's entity recognition is unreliable (non-Western names, "Last, First" formatting, short strings with no prose context). Values already established by the anchor or correlated-field logic are not overwritten.
 
 See [Section 4](#4-anchor-field-selection-structured-mode) for guidance on anchor field selection.
 
@@ -308,6 +313,39 @@ pseudoswapper structured access_logs.csv --anchor user_id --employees-csv ~/comp
 
 Output follows the same naming convention: `employees.csv` → `employees.redacted.csv`.
 
+#### Force-tokenizing specific columns
+
+When you run `pseudoswapper structured`, the tool reads the file's column headers and prompts you to select any columns that should be force-tokenized:
+
+```
+Columns in employees.xlsx:
+  1. employee_id
+  2. Last name, First name
+  3. Department
+  4. Email
+  5. Manager
+
+Select columns to force-tokenize (e.g. 1,4 — or Enter to skip):
+```
+
+Enter the column numbers separated by commas (e.g. `2,4`), or press Enter to skip and rely on automatic detection.
+
+Force-tokenized columns bypass NLP detection entirely — every non-empty cell is tokenized as a person name or email unconditionally. This is the recommended fix for columns where spaCy misses names due to non-Western names, "Last, First" formatting, or short strings with no prose context.
+
+To skip the interactive prompt, pass `--force-fields` on the CLI (one flag per column, repeatable):
+
+```bash
+# Single force field
+pseudoswapper structured employees.xlsx --force-fields "Last name, First name"
+
+# Multiple force fields
+pseudoswapper structured employees.xlsx \
+  --force-fields "Last name, First name" \
+  --force-fields "Email"
+```
+
+To apply force fields on every run without being prompted, add them to the config file under `structured.force_fields` (see [Section 3](#3-setting-up-the-config-file)).
+
 ### Verifying the output
 
 Before sharing the redacted file, open it and confirm:
@@ -382,11 +420,14 @@ If the AI has substantially rewritten a token (e.g. expanding `[PERSON_1]` to `P
 
 ### L1 — NLP may miss names in non-prose contexts
 
-spaCy's named entity recognition is trained on prose. It is less reliable in tables, headers, log lines, and structured formats.
+spaCy's named entity recognition is trained on prose. It is less reliable in tables, headers, log lines, and structured formats. Non-Western names and "Last, First" formatted fields are particularly prone to misses or misclassification.
 
 **Impact:** A name in a CSV cell or log timestamp prefix may not be detected.
 
-**Mitigation:** Add known employees to the `employees` list in your YAML config. Pre-registered employees are detected by exact-match before NLP runs, so they are always found regardless of context. This is the primary safety net for high-value individuals.
+**Mitigation (choose one or both):**
+
+- Add known employees to the `employees` list in your YAML config. Pre-registered employees are detected by exact-match before NLP runs, so they are always found regardless of context.
+- In Structured mode, use `force_fields` (via the interactive prompt, `--force-fields` CLI flag, or `structured.force_fields` in config) to guarantee that every cell in a named column is tokenized unconditionally, without relying on NLP at all.
 
 ### L2 — Emails and names are not linked in Document mode
 
