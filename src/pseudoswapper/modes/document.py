@@ -25,10 +25,15 @@ def _output_path(input_path: Path) -> Path:
     return input_path.parent / f"{input_path.stem}.redacted{input_path.suffix}"
 
 
-def redact_document(file: Path, config: dict, cwd: Path) -> Path:
+def redact_document(
+    file: Path,
+    config: dict,
+    cwd: Path,
+    passthrough_types: set[str] | None = None,
+) -> Path:
     """Run document mode: detect, tokenize, replace, write output, save session."""
     registry = EntityRegistry()
-    tokenizer = Tokenizer(registry)
+    tokenizer = Tokenizer(registry, passthrough_types=passthrough_types)
     detector = Detector(config)
 
     _pre_register_employees(config, tokenizer)

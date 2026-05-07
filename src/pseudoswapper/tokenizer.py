@@ -3,17 +3,33 @@ from __future__ import annotations
 from .detector import DetectedEntity
 from .entity_registry import EntityRegistry
 
+# These types are always tokenized — no passthrough config or CLI flag can bypass them.
+PROTECTED_TYPES: frozenset[str] = frozenset({"PERSON", "EMAIL", "COMPANY", "ORG"})
+
 
 class Tokenizer:
     """Converts DetectedEntity spans into token assignments, owning the person entity model."""
 
-    def __init__(self, registry: EntityRegistry) -> None:
+    def __init__(
+        self,
+        registry: EntityRegistry,
+        passthrough_types: set[str] | None = None,
+    ) -> None:
         self._registry = registry
+        # Silently drop any attempt to passthrough a protected type.
+        self._passthrough: frozenset[str] = frozenset(
+            t for t in (passthrough_types or set()) if t not in PROTECTED_TYPES
+        )
 
     def assign(self, entities: list[DetectedEntity]) -> dict[str, str]:
-        """Return a mapping of original text → token for all detected entities."""
+        """Return a mapping of original text → token for all detected entities.
+
+        Entities whose type is in the passthrough set are left unreplaced.
+        """
         token_map: dict[str, str] = {}
         for entity in entities:
+            if entity.entity_type in self._passthrough:
+                continue
             token = self._assign_one(entity)
             token_map[entity.text] = token
         return token_map

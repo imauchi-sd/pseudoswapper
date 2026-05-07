@@ -135,6 +135,31 @@ share it.
 
 ---
 
+### Decision 7: Two-tier passthrough — protected types vs. bypassable types
+
+**Decision:** Users can opt out of tokenising certain entity types (`IP`, `DOMAIN`, `URL`, `PHONE`,
+`LOC`) via `passthrough_types` in config or `--passthrough` on the CLI. A hardcoded set of
+protected types (`PERSON`, `EMAIL`, `COMPANY`, `ORG`) is always tokenised and cannot be bypassed
+by any config or flag.
+
+**Rationale:** Not all detectable values are equally sensitive. IP addresses in a security incident
+log carry analytical value — the AI needs to reason about specific hosts. Suppressing them removes
+useful information without adding privacy protection, since IPs of internal systems are not
+personally identifying in most contexts. At the same time, allowing users to bypass names or emails
+would undermine the tool's core privacy guarantee, so those types are hardcoded as non-bypassable.
+
+**Implementation:** `PROTECTED_TYPES` is a `frozenset` in `tokenizer.py`. When a `Tokenizer` is
+constructed with a `passthrough_types` set, any protected type listed there is silently dropped.
+`Tokenizer.assign()` skips entities whose type is in the effective passthrough set. Force-tokenized
+fields (structured mode's `force_fields`) always tokenize unconditionally — they are unaffected by
+passthrough, since the user explicitly opted in to tokenising that column.
+
+**Merge semantics:** CLI `--passthrough` flags are unioned with the YAML `passthrough_types` list.
+Neither overrides the other. The final set is computed in `cli._resolve_passthrough()` and passed
+down to the mode orchestrators.
+
+---
+
 ## Email Handling: The Hard Problem
 
 Email addresses are a special case because they often encode personal information (first name,
@@ -171,6 +196,7 @@ This is the authoritative list of known limitations to carry into USER_GUIDE.md.
 | L6 | NER false positives (common words as names) | Over-redaction | Add `exclude_terms` to YAML config |
 | L7 | No binary file redaction in v1 (no .docx, .pdf) | Users must convert to .txt first | Document conversion step in guide |
 | L8 | Opaque ID anchors restore to the ID, not the person name | `[PERSON_1]` → `"E001"` rather than `"John Doe"` in restored AI output | Use `full_name` as anchor when human-readable restoration is required |
+| L9 | `passthrough_types` intentionally leaves selected entity types unreplaced | The AI assistant receives original values for bypassed types | Protected types (PERSON, EMAIL, COMPANY, ORG) cannot be bypassed; user is responsible for assessing sensitivity of bypassed types |
 
 ---
 

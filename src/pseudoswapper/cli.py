@@ -139,12 +139,27 @@ def _prompt_force_fields(file: Path) -> list[str]:
     return selected
 
 
+def _resolve_passthrough(config: dict, cli_flags: Optional[List[str]]) -> set[str]:
+    """Merge YAML passthrough_types with CLI --passthrough flags into a single set."""
+    from pseudoswapper.tokenizer import PROTECTED_TYPES
+    combined = set(config.get("passthrough_types", [])) | set(cli_flags or [])
+    return combined - PROTECTED_TYPES
+
+
 @app.command()
 def document(
     file: Optional[Path] = typer.Argument(None, help="Prose file to redact"),
     employees_csv: Optional[Path] = typer.Option(
         None, "--employees-csv", "-e",
         help="CSV file of employees to pre-register (full_name, email, username columns).",
+    ),
+    passthrough: Optional[List[str]] = typer.Option(
+        None, "--passthrough",
+        help=(
+            "Entity type to leave unreplaced (repeatable). "
+            "Valid values: IP, DOMAIN, URL, PHONE, LOC. "
+            "Protected types (PERSON, EMAIL, COMPANY, ORG) are always tokenized."
+        ),
     ),
 ) -> None:
     """Redact sensitive data from a prose document (txt, email, report)."""
@@ -156,9 +171,11 @@ def document(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
+    passthrough_types = _resolve_passthrough(config, passthrough)
+
     from pseudoswapper.modes.document import redact_document
     try:
-        out = redact_document(file, config, Path.cwd())
+        out = redact_document(file, config, Path.cwd(), passthrough_types=passthrough_types)
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
@@ -178,6 +195,14 @@ def structured(
         None, "--force-fields",
         help="Column to always tokenize, bypassing NER (repeatable). If omitted, an interactive prompt is shown.",
     ),
+    passthrough: Optional[List[str]] = typer.Option(
+        None, "--passthrough",
+        help=(
+            "Entity type to leave unreplaced (repeatable). "
+            "Valid values: IP, DOMAIN, URL, PHONE, LOC. "
+            "Protected types (PERSON, EMAIL, COMPANY, ORG) are always tokenized."
+        ),
+    ),
 ) -> None:
     """Redact sensitive data from a structured file (CSV, JSON, XLSX)."""
     file = _require_file(file, "structured")
@@ -190,9 +215,16 @@ def structured(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
+    passthrough_types = _resolve_passthrough(config, passthrough)
+
     from pseudoswapper.modes.structured import redact_structured
     try:
-        out = redact_structured(file, config, Path.cwd(), cli_anchor=anchor, force_fields=resolved_force_fields)
+        out = redact_structured(
+            file, config, Path.cwd(),
+            cli_anchor=anchor,
+            force_fields=resolved_force_fields,
+            passthrough_types=passthrough_types,
+        )
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

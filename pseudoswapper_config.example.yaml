@@ -46,3 +46,15 @@ structured:
 # exclude_terms:
 #   - May
 #   - Will
+
+# Entity types to leave unreplaced (passthrough).
+# Useful when certain technical values carry analytical value — e.g. keeping IP
+# addresses visible in a security incident log while still redacting all names.
+#
+# Valid values: IP, DOMAIN, URL, PHONE, LOC
+# Protected types (PERSON, EMAIL, COMPANY, ORG) are always tokenized and cannot
+# be listed here. Per-run overrides are also available via --passthrough on the CLI.
+#
+# passthrough_types:
+#   - IP
+#   - DOMAIN

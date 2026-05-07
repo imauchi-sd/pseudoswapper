@@ -125,3 +125,23 @@ def test_full_sample_document_produces_no_known_pii(cfg, tmp_path):
     assert "Acme Corporation" not in content
     assert "Project Nightingale" not in content
     assert "john.doe@acme.com" not in content
+
+
+# ── Passthrough integration tests ────────────────────────────────────────────
+
+def test_passthrough_ip_preserved_in_document(cfg, tmp_path):
+    src = tmp_path / "doc.txt"
+    src.write_text("Alert from 192.168.1.1 involving John Doe.")
+    out = redact_document(src, cfg, tmp_path, passthrough_types={"IP"})
+    content = out.read_text()
+    assert "192.168.1.1" in content
+    assert "John Doe" not in content
+
+
+def test_passthrough_does_not_bypass_email(cfg, tmp_path):
+    src = tmp_path / "doc.txt"
+    src.write_text("Contact john.doe@acme.com for details.")
+    out = redact_document(src, cfg, tmp_path, passthrough_types={"EMAIL"})
+    content = out.read_text()
+    assert "john.doe@acme.com" not in content
+    assert "[EMAIL_" in content

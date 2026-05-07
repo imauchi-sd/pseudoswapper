@@ -66,6 +66,12 @@ pseudoswapper structured access_logs.csv --anchor user_id
 # Force-tokenize specific columns, bypassing NER (repeatable; skips interactive prompt)
 pseudoswapper structured employees.xlsx --force-fields "Last name, First name" --force-fields "Email"
 
+# Leave certain entity types unreplaced (e.g. keep IPs visible in a security log)
+# Protected types (PERSON, EMAIL, COMPANY, ORG) are always tokenized regardless
+pseudoswapper document incident.log --passthrough IP
+pseudoswapper document incident.log --passthrough IP --passthrough DOMAIN
+pseudoswapper structured access_logs.csv --anchor user_id --passthrough IP --passthrough URL
+
 # Supply an employee roster per-invocation (both modes)
 pseudoswapper document report.txt --employees-csv ~/company_employees.csv
 pseudoswapper structured access_logs.csv --anchor user_id --employees-csv ~/company_employees.csv
@@ -97,6 +103,7 @@ pseudoswapper clear-session
 - **`employees`** — known individuals listed inline; guarantees consistent tokenisation even when NLP misses a name
 - **`employees_csv`** — path to a CSV file of employees (use instead of or alongside `employees` for large rosters); must have a `full_name` column, optionally `email` and `username`
 - **`exclude_terms`** — words to exclude from NLP detection (prevents over-redaction of common names)
+- **`passthrough_types`** — entity types to leave unreplaced (e.g. `IP`, `DOMAIN`, `URL`, `PHONE`, `LOC`); useful when certain technical values carry analytical value. Protected types (`PERSON`, `EMAIL`, `COMPANY`, `ORG`) cannot be bypassed. Also overridable per-run via `--passthrough` on the CLI.
 - **`structured.anchor_field`** — default anchor column for structured mode
 - **`structured.correlated_fields`** — columns to correlate to the anchor entity per row
 - **`structured.force_fields`** — columns to always tokenize unconditionally, bypassing NLP (useful for name columns with non-Western names or non-standard formatting)
@@ -147,7 +154,7 @@ See [`USER_GUIDE.md`](USER_GUIDE.md) for full documentation including anchor fie
 ```bash
 source .venv/bin/activate
 pip install -e ".[dev]"
-python -m pytest          # 111 tests, all passing
+python -m pytest          # 118 tests, all passing
 ```
 
 **Python interpreter:** the project requires the `.venv` at the project root (Python 3.12). Always activate it before running any `python` or `pytest` commands. If you use Claude Code, `.claude/settings.json` prepends `.venv/bin` to `PATH` automatically at session start — no manual activation needed there.

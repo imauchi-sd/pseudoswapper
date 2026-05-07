@@ -87,6 +87,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH, employees_csv: Path | None = N
     data.setdefault("company_terms", [])
     data.setdefault("employees", [])
     data.setdefault("exclude_terms", [])
+    data.setdefault("passthrough_types", [])
     data.setdefault("structured", {})
     data["structured"].setdefault("anchor_field", None)
     data["structured"].setdefault("correlated_fields", [])
@@ -114,6 +115,7 @@ def default_config() -> dict:
         "company_terms": [],
         "employees": [],
         "exclude_terms": [],
+        "passthrough_types": [],
         "structured": {
             "anchor_field": None,
             "correlated_fields": [],

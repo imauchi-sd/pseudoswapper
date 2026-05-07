@@ -1,7 +1,7 @@
 """Tests for the Tokenizer (Phase 4)."""
 from pseudoswapper.detector import DetectedEntity
 from pseudoswapper.entity_registry import EntityRegistry
-from pseudoswapper.tokenizer import Tokenizer
+from pseudoswapper.tokenizer import PROTECTED_TYPES, Tokenizer
 
 
 def _entity(entity_type: str, text: str) -> DetectedEntity:
@@ -95,3 +95,46 @@ def test_same_entity_value_different_types_returns_first_registered():
     result = t.assign([_entity("EMAIL", "x@y.com")])
     assert result["x@y.com"] == "[EMAIL_1]"
     assert t._registry._counters["EMAIL"] == 1
+
+
+# ── Passthrough tests ────────────────────────────────────────────────────────
+
+def test_passthrough_ip_leaves_ip_unreplaced():
+    t = Tokenizer(EntityRegistry(), passthrough_types={"IP"})
+    result = t.assign([_entity("IP", "10.0.0.1")])
+    assert "10.0.0.1" not in result
+
+
+def test_passthrough_does_not_affect_other_types():
+    t = Tokenizer(EntityRegistry(), passthrough_types={"IP"})
+    result = t.assign([_entity("IP", "10.0.0.1"), _entity("EMAIL", "a@b.com")])
+    assert "10.0.0.1" not in result
+    assert result["a@b.com"] == "[EMAIL_1]"
+
+
+def test_passthrough_multiple_types():
+    t = Tokenizer(EntityRegistry(), passthrough_types={"IP", "DOMAIN", "URL"})
+    result = t.assign([
+        _entity("IP", "10.0.0.1"),
+        _entity("DOMAIN", "example.com"),
+        _entity("URL", "https://example.com"),
+        _entity("PERSON", "Jane Doe"),
+    ])
+    assert "10.0.0.1" not in result
+    assert "example.com" not in result
+    assert "https://example.com" not in result
+    assert result["Jane Doe"] == "[PERSON_1]"
+
+
+def test_passthrough_cannot_bypass_protected_types():
+    # PERSON, EMAIL, COMPANY, ORG must always be tokenized.
+    for protected in PROTECTED_TYPES:
+        t = Tokenizer(EntityRegistry(), passthrough_types={protected})
+        result = t.assign([_entity(protected, "sensitive-value")])
+        assert "sensitive-value" in result, f"{protected} should not be bypassable"
+
+
+def test_passthrough_silently_ignores_protected_types_in_set():
+    t = Tokenizer(EntityRegistry(), passthrough_types={"IP", "PERSON"})
+    assert "PERSON" not in t._passthrough
+    assert "IP" in t._passthrough

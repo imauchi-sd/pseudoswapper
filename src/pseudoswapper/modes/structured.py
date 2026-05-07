@@ -244,12 +244,13 @@ def redact_structured(
     cwd: Path,
     cli_anchor: str | None = None,
     force_fields: list[str] | None = None,
+    passthrough_types: set[str] | None = None,
 ) -> Path:
     """Run structured mode: read → anchor resolution → row processing → write → save session."""
     from pseudoswapper.modes.document import _pre_register_employees
 
     registry = EntityRegistry()
-    tokenizer = Tokenizer(registry)
+    tokenizer = Tokenizer(registry, passthrough_types=passthrough_types)
     detector = Detector(config)
     _pre_register_employees(config, tokenizer)
 

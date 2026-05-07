@@ -184,6 +184,22 @@ exclude_terms:
   - Mark
 ```
 
+### passthrough_types
+
+Some entity types carry analytical value and are better left unreplaced. The most common case is IP addresses in security incident logs — you want the AI to reason about specific hosts while still protecting all personal information.
+
+```yaml
+passthrough_types:
+  - IP
+  - DOMAIN
+```
+
+Valid values: `IP`, `DOMAIN`, `URL`, `PHONE`, `LOC`.
+
+The following types are **always tokenized** regardless of this setting: `PERSON`, `EMAIL`, `COMPANY`, `ORG`. Listing a protected type here has no effect.
+
+You can also override this per-run using `--passthrough` on the CLI (see [Section 5](#5-running-the-tool)). CLI flags are merged with the YAML list — they do not replace it.
+
 ### Security note
 
 `~/.pseudoswapper_config.yaml` contains employee names and internal identifiers. Treat it as sensitive:
@@ -292,6 +308,12 @@ pseudoswapper document email_thread.txt
 
 # Supply an employee roster for this run only
 pseudoswapper document report.txt --employees-csv ~/company_employees.csv
+
+# Leave IP addresses unreplaced (useful for security incident analysis)
+pseudoswapper document incident.log --passthrough IP
+
+# Multiple types — repeatable flag
+pseudoswapper document incident.log --passthrough IP --passthrough DOMAIN
 ```
 
 Output is always written alongside the input file with a `.redacted` suffix inserted before the file extension: `name.txt` → `name.redacted.txt`.
@@ -309,6 +331,9 @@ pseudoswapper structured report.xlsx --anchor full_name
 
 # Supply an employee roster for this run only
 pseudoswapper structured access_logs.csv --anchor user_id --employees-csv ~/company_employees.csv
+
+# Leave IP addresses and URLs unreplaced while still tokenizing all names and emails
+pseudoswapper structured access_logs.csv --anchor user_id --passthrough IP --passthrough URL
 ```
 
 Output follows the same naming convention: `employees.csv` → `employees.redacted.csv`.
