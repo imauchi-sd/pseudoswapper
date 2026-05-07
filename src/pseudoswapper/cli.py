@@ -1,7 +1,7 @@
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 
@@ -87,6 +87,58 @@ def _require_file(file: Optional[Path], mode: str) -> Path:
     return _pick_file(work_dir, mode)
 
 
+def _read_columns(file: Path) -> list[str]:
+    suffix = file.suffix.lower()
+    try:
+        if suffix == ".csv":
+            import pandas as pd
+            return list(pd.read_csv(file, nrows=0, dtype=str).columns)
+        if suffix == ".json":
+            import json
+            data = json.loads(file.read_text(encoding="utf-8"))
+            rows = data if isinstance(data, list) else [data]
+            return list(rows[0].keys()) if rows else []
+        if suffix in (".xlsx", ".xls"):
+            import pandas as pd
+            return list(pd.read_excel(file, nrows=0, dtype=str).columns)
+    except Exception:
+        pass
+    return []
+
+
+def _prompt_force_fields(file: Path) -> list[str]:
+    columns = _read_columns(file)
+    if not columns:
+        return []
+
+    typer.echo(f"\nColumns in {file.name}:")
+    for i, col in enumerate(columns, 1):
+        typer.echo(f"  {i}. {col}")
+
+    raw = typer.prompt(
+        "\nSelect columns to force-tokenize (e.g. 1,4 — or Enter to skip)",
+        default="",
+        show_default=False,
+    )
+    if not raw.strip():
+        return []
+
+    selected: list[str] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            idx = int(part) - 1
+            if 0 <= idx < len(columns):
+                selected.append(columns[idx])
+            else:
+                typer.echo(f"  Ignoring out-of-range: {part}", err=True)
+        except ValueError:
+            typer.echo(f"  Ignoring invalid entry: '{part}'", err=True)
+    return selected
+
+
 @app.command()
 def document(
     file: Optional[Path] = typer.Argument(None, help="Prose file to redact"),
@@ -122,9 +174,15 @@ def structured(
         None, "--employees-csv", "-e",
         help="CSV file of employees to pre-register (full_name, email, username columns).",
     ),
+    force_fields: Optional[List[str]] = typer.Option(
+        None, "--force-fields",
+        help="Column to always tokenize, bypassing NER (repeatable). If omitted, an interactive prompt is shown.",
+    ),
 ) -> None:
     """Redact sensitive data from a structured file (CSV, JSON, XLSX)."""
     file = _require_file(file, "structured")
+
+    resolved_force_fields = list(force_fields) if force_fields else _prompt_force_fields(file)
 
     try:
         config = load_config(employees_csv=employees_csv)
@@ -134,7 +192,7 @@ def structured(
 
     from pseudoswapper.modes.structured import redact_structured
     try:
-        out = redact_structured(file, config, Path.cwd(), cli_anchor=anchor)
+        out = redact_structured(file, config, Path.cwd(), cli_anchor=anchor, force_fields=resolved_force_fields)
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

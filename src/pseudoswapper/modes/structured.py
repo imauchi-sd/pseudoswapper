@@ -66,6 +66,16 @@ def _cell_str(value: Any) -> str:
     return "" if s.lower() in ("nan", "none", "<na>") else s
 
 
+def _force_tokenize_cell(val: str, registry: EntityRegistry, tokenizer: Tokenizer) -> str:
+    """Tokenize *val* unconditionally, bypassing NER detection."""
+    existing = registry.lookup(val)
+    if existing:
+        return existing
+    if "@" in val:
+        return registry.register(val, "EMAIL")
+    return tokenizer._assign_person(val)
+
+
 def _redact_cell(val: str, detector: Detector, tokenizer: Tokenizer) -> str:
     """Detect and tokenize PII in a single cell value.
 
@@ -93,10 +103,12 @@ def _process_rows(
     tokenizer: Tokenizer,
     registry: EntityRegistry,
     detector: Detector,
+    force_fields: list[str] | None = None,
 ) -> list[dict]:
     correlated: set[str] = set(
         (config.get("structured") or {}).get("correlated_fields", [])
     )
+    forced: set[str] = set(force_fields or [])
 
     result_rows: list[dict] = []
 
@@ -109,7 +121,10 @@ def _process_rows(
                 val = _cell_str(value)
                 if not val:
                     continue
-                out[field] = _redact_cell(val, detector, tokenizer)
+                if field in forced:
+                    out[field] = _force_tokenize_cell(val, registry, tokenizer)
+                else:
+                    out[field] = _redact_cell(val, detector, tokenizer)
             result_rows.append(out)
             continue
 
@@ -131,6 +146,12 @@ def _process_rows(
                     out[field] = registry.register(val, "EMAIL")
                 else:
                     out[field] = registry.register(val, "PERSON")
+            for field in forced:
+                if field == anchor_field or field in correlated or field not in row:
+                    continue
+                val = _cell_str(row[field])
+                if val:
+                    out[field] = _force_tokenize_cell(val, registry, tokenizer)
             result_rows.append(out)
             continue
 
@@ -168,7 +189,10 @@ def _process_rows(
             val = _cell_str(value)
             if not val:
                 continue
-            out[field] = _redact_cell(val, detector, tokenizer)
+            if field in forced:
+                out[field] = _force_tokenize_cell(val, registry, tokenizer)
+            else:
+                out[field] = _redact_cell(val, detector, tokenizer)
 
         result_rows.append(out)
 
@@ -219,6 +243,7 @@ def redact_structured(
     config: dict,
     cwd: Path,
     cli_anchor: str | None = None,
+    force_fields: list[str] | None = None,
 ) -> Path:
     """Run structured mode: read → anchor resolution → row processing → write → save session."""
     from pseudoswapper.modes.document import _pre_register_employees
@@ -231,7 +256,10 @@ def redact_structured(
     rows, columns = _read_file(file)
     anchor_field = _resolve_anchor(columns, cli_anchor, config)
 
-    processed = _process_rows(rows, anchor_field, config, tokenizer, registry, detector)
+    config_force_fields: list[str] = (config.get("structured") or {}).get("force_fields", [])
+    resolved_force_fields = force_fields if force_fields is not None else config_force_fields
+
+    processed = _process_rows(rows, anchor_field, config, tokenizer, registry, detector, resolved_force_fields)
 
     out = _output_path(file)
     _write_file(processed, columns, out)
