@@ -131,6 +131,29 @@ employees:
 
 Only `full_name` is required. Including `username` ensures that short identifiers like `jdoe` are replaced even when they appear without context.
 
+### employees_csv — loading a large employee roster from a CSV file
+
+For organisations with more employees than is practical to list inline, you can point to a CSV file instead:
+
+```yaml
+employees_csv: ~/company_employees.csv
+```
+
+The CSV must have a `full_name` column. `email` and `username` are optional. Any other columns are ignored.
+
+```
+full_name,email,username
+John Doe,john.doe@acme.com,jdoe
+Jane Smith,j.smith@acme.com,jsmith
+Alice Johnson,alice.johnson@acme.com,ajohnson
+```
+
+`employees_csv` and the inline `employees` list are merged. If the same `full_name` appears in both, the CSV entry takes precedence.
+
+A sample file (`employees_sample.csv`) is included in the project root as a starting template.
+
+You can also supply a CSV per-invocation using the `--employees-csv` CLI flag (see [Section 5](#5-running-the-tool)). The CLI flag takes priority over the `employees_csv` config key.
+
 ### structured settings
 
 ```yaml
@@ -229,6 +252,30 @@ cp pseudoswapper_config.example.yaml ~/.pseudoswapper_config.yaml
 # Edit with your company terms and employees
 ```
 
+### Work directory
+
+If you keep all your input files in one folder, you can register it as the work directory. When you then run `document`, `structured`, or `restore` without a file argument, the tool lists the eligible files in that folder and prompts you to pick one by number — no need to type full paths.
+
+```bash
+# Set once
+pseudoswapper workdir --set ~/Documents/sensitive-files
+
+# Check what is set
+pseudoswapper workdir --show
+
+# Remove the setting
+pseudoswapper workdir --clear
+```
+
+The work directory is saved to `~/.pseudoswapper_prefs.yaml` (separate from your config file, so it is never affected by `config --edit`).
+
+**File filtering by mode:**
+- `document` — shows all non-structured files (excludes `.csv`, `.json`, `.xlsx`) and excludes already-redacted output files
+- `structured` — shows only `.csv`, `.json`, and `.xlsx` files, excluding already-redacted outputs
+- `restore` — shows all non-hidden files (AI output can be saved with any extension)
+
+If a file is specified directly on the command line, the work directory is ignored for that invocation.
+
 ### Document mode
 
 ```bash
@@ -237,6 +284,9 @@ pseudoswapper document report.txt
 
 pseudoswapper document email_thread.txt
 # → writes email_thread.redacted.txt
+
+# Supply an employee roster for this run only
+pseudoswapper document report.txt --employees-csv ~/company_employees.csv
 ```
 
 Output is always written alongside the input file with a `.redacted` suffix inserted before the file extension: `name.txt` → `name.redacted.txt`.
@@ -251,6 +301,9 @@ pseudoswapper structured access_logs.csv
 pseudoswapper structured employees.csv --anchor employee_id
 pseudoswapper structured data.json --anchor user_id
 pseudoswapper structured report.xlsx --anchor full_name
+
+# Supply an employee roster for this run only
+pseudoswapper structured access_logs.csv --anchor user_id --employees-csv ~/company_employees.csv
 ```
 
 Output follows the same naming convention: `employees.csv` → `employees.redacted.csv`.

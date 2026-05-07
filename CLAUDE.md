@@ -1,5 +1,15 @@
 # CLAUDE.md — Session Briefing: Local Data Redaction Tool
 
+## Python Interpreter
+
+This project uses a `.venv` at the project root (Python 3.12). `.claude/settings.json` prepends
+`.venv/bin` to PATH so `python3` resolves correctly in Claude Code sessions.
+
+If a command produces unexpected Python version output or import errors, use the explicit path:
+`.venv/bin/python` instead of `python3`.
+
+---
+
 ## Project Overview
 
 Build a Python CLI tool for local, session-scoped tokenisation of sensitive data in files before

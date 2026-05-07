@@ -15,6 +15,12 @@ company_terms:
 # Known employees — pre-registered before file scanning.
 # Guarantees consistent tokenisation even when NLP misses a name.
 # Supports: full_name, email, username (all optional except full_name).
+#
+# For large rosters, point to a CSV file instead of listing entries inline.
+# The CSV must have a 'full_name' column; 'email' and 'username' are optional.
+# Inline entries below are merged with the CSV (CSV wins on duplicate full_name).
+#
+# employees_csv: ~/company_employees.csv
 employees:
   - full_name: John Doe
     email: john.doe@acme.com
