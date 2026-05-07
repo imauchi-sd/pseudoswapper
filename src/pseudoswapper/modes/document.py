@@ -65,6 +65,19 @@ def _redact_docx(file: Path, config: dict, cwd: Path, passthrough_types: set[str
     return out
 
 
+def _redact_pdf(file: Path, config: dict, cwd: Path, passthrough_types: set[str] | None) -> Path:
+    from pseudoswapper.extractors.pdf import extract_text
+    registry, tokenizer, detector = _build_pipeline(config, passthrough_types)
+    text = extract_text(file)
+    entities = detector.analyze(text)
+    token_map = tokenizer.assign(entities)
+    redacted_text = replace(text, token_map)
+    out = _output_path(file, force_suffix=".txt")
+    out.write_text(redacted_text, encoding="utf-8")
+    _save(registry, cwd)
+    return out
+
+
 def redact_document(
     file: Path,
     config: dict,
@@ -75,4 +88,6 @@ def redact_document(
     suffix = file.suffix.lower()
     if suffix == ".docx":
         return _redact_docx(file, config, cwd, passthrough_types)
+    if suffix == ".pdf":
+        return _redact_pdf(file, config, cwd, passthrough_types)
     return _redact_plain(file, config, cwd, passthrough_types)

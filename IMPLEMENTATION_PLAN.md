@@ -30,13 +30,15 @@ pseudoswapper/
 │       │   └── structured.py          # Structured mode (CSV / JSON / XLSX)
 │       └── extractors/
 │           ├── __init__.py
-│           └── docx.py                # python-docx paragraph extractor + token writer
+│           ├── docx.py                # python-docx paragraph extractor + token writer
+│           └── pdf.py                 # pdfplumber text extractor; UnsupportedFileError
 └── tests/
     ├── __init__.py
     ├── conftest.py                     # Shared config builders, tmp_path helpers
     ├── fixtures/
     │   ├── sample_document.txt         # Fake-but-realistic prose with PII
     │   ├── sample_document.docx        # Same content as .txt; "Doe" in split run for run-split test
+    │   ├── sample_document.pdf         # Same content as .txt; generated via reportlab
     │   ├── sample_structured.csv
     │   ├── sample_structured.json
     │   └── sample_structured.xlsx
@@ -49,7 +51,8 @@ pseudoswapper/
     ├── test_restore.py
     ├── test_document.py
     ├── test_structured.py
-    └── test_docx.py                    # 11 tests for .docx document mode support
+    ├── test_docx.py                    # 11 tests for .docx document mode support
+    └── test_pdf.py                     # 11 tests for .pdf document mode support
 ```
 
 ---
@@ -70,6 +73,7 @@ pseudoswapper/
 | `modes/document.py` | Orchestrates document mode: dispatches on file suffix (`.docx` vs plain text) → pre-register YAML employees → detect → tokenize → replace → write `.redacted` output → save session. |
 | `modes/structured.py` | Orchestrates structured mode: reads CSV/JSON/XLSX → determines anchor field → processes row by row → writes `.redacted` output → saves session. |
 | `extractors/docx.py` | `extract_text(path)` — concatenates all paragraph runs for PII detection. `apply_token_map(src, token_map, out)` — paragraph-level replacement written to a new `.docx` file. |
+| `extractors/pdf.py` | `extract_text(path) -> str` — extracts text page-by-page via pdfplumber, joins with `\n\n`. Raises `UnsupportedFileError` for image-only PDFs with no extractable text. |
 
 ---
 
@@ -325,7 +329,7 @@ load .pseudoswapper_session → temp session path
 
 ---
 
-### Phase 6 — Structured mode `[ ]`
+### Phase 6 — Structured mode `[x]`
 
 **Deliverables**
 - `src/pseudoswapper/modes/structured.py`
@@ -353,7 +357,7 @@ load .pseudoswapper_session → temp session path
 ### Phase 7 — Final polish `[x]`
 
 **Deliverables**
-- `USER_GUIDE.md` — 8 sections: what the tool does, mode selection, YAML config setup, anchor field selection (with good/bad anchor table), running the tool, restoring AI output (session lifecycle, token tolerance, clear-session), known limitations (L1–L7), security notes
+- `USER_GUIDE.md` — 8 sections: what the tool does, mode selection, YAML config setup, anchor field selection (with good/bad anchor table), running the tool, restoring AI output (session lifecycle, token tolerance, clear-session), known limitations (L1–L9), security notes
 - ~~`pseudoswapper config --show` and `pseudoswapper config --edit` commands wired in `cli.py`~~ — done in Phase 1
 - ~~`pseudoswapper clear-session` command wired in `cli.py`~~ — done in Phase 5
 - Error messages reviewed — all `ConfigError`, missing session, and bad file paths produce clean user-facing messages with no stack traces (verified in cli.py)
@@ -393,6 +397,36 @@ load .pseudoswapper_session → temp session path
 - Passthrough IP preserved while name is replaced — PASS
 - Full fixture contains no known PII — PASS
 - 11 tests, all passing. Existing 130 tests unaffected (141 total).
+
+---
+
+### Stage 2 — PDF support `[x]`
+
+**New dependency:** `pdfplumber >= 0.10` (added to `pyproject.toml`). `pymupdf` (fitz) was evaluated and rejected: AGPL license is incompatible with distribution. `pdfplumber` (MIT) is sufficient.
+
+**Deliverables**
+- `src/pseudoswapper/extractors/pdf.py`
+  - `extract_text(path) -> str` — opens PDF with pdfplumber, extracts text page by page, joins with `\n\n`
+  - Raises `UnsupportedFileError` if all pages yield empty text (scanned/image-only PDF)
+- `src/pseudoswapper/modes/document.py` — `_redact_pdf()` added; `redact_document()` dispatch extended with `.pdf` branch; output suffix forced to `.txt` via `_output_path(file, force_suffix=".txt")`
+- `tests/fixtures/sample_document.pdf` — generated with `reportlab`; mirrors `sample_document.txt` content
+- `tests/test_pdf.py` — 11 tests
+
+**Output format decision:** PDF input always produces `.redacted.txt`. PDFs store drawing instructions, not a document model — writing back a redacted PDF with original layout would require rebuilding the entire document (prohibitive complexity with no layout benefit for AI consumption). Plain text output is the correct trade-off. `report.pdf` → `report.redacted.txt`.
+
+**Tests**
+- Output file is `report.redacted.txt` (suffix forced to `.txt`) — PASS
+- Output is readable UTF-8 text — PASS
+- Output written alongside input — PASS
+- Employee name replaced with `[PERSON_N]` token — PASS
+- Company term replaced with `[COMPANY_N]` token — PASS
+- Email replaced with `[EMAIL_N]` token — PASS
+- Same token emitted for same name across multiple pages — PASS
+- Two distinct employees get distinct person tokens — PASS
+- Passthrough IP preserved while name is replaced — PASS
+- Image-only PDF raises `UnsupportedFileError` — PASS
+- Full fixture contains no known PII — PASS
+- 11 tests, all passing. Total suite: 152 tests, all passing.
 
 ---
 

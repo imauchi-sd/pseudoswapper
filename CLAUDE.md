@@ -316,7 +316,7 @@ pandas>=2.0
 openpyxl>=3.1           # for .xlsx support via pandas
 ```
 
-Planned additions (rich format support):
+Rich format support (implemented):
 
 ```
 python-docx>=1.1        # Stage 1: .docx extraction and round-trip writing
@@ -335,28 +335,28 @@ distribution. `pdfplumber` is sufficient and MIT licensed.
 - Cloud sync or any network calls during redact/restore
 - Automatic email-to-name inference beyond same-row structured mode correlation
 - Composite anchor fields (multi-field identity)
-- Binary file formats beyond .xlsx — `.docx` and `.pdf` are planned (see below); all others require
-  manual conversion to `.txt` first
+- Binary file formats beyond `.xlsx` and `.docx`/`.pdf` — all others require manual conversion to
+  `.txt` first. Note: `.pdf` output is always `.redacted.txt` (layout not preserved)
 
 ---
 
-## Planned Extensions: Rich Format Support
+## Rich Format Support (Implemented)
 
-Document mode will be extended to handle `.docx` (Stage 1) and `.pdf` (Stage 2) natively. The
-detection and tokenisation pipeline is unchanged — only extraction and output writing differ. The
-dispatch lives in `modes/document.py` as a simple `if/elif/else` on the file suffix.
+Document mode handles `.docx` (Stage 1) and `.pdf` (Stage 2) natively. The detection and
+tokenisation pipeline is unchanged — only extraction and output writing differ. The dispatch lives
+in `modes/document.py` as a simple `if/elif/else` on the file suffix.
 
 ---
 
-### Stage 1: `.docx` support
+### Stage 1: `.docx` support `[implemented]`
 
 **New dependency:** `python-docx >= 1.1`
 
 **New module:** `src/pseudoswapper/extractors/docx.py`
 
 Two responsibilities:
-- `extract_paragraphs(path) -> list[str]` — returns full paragraph strings (all XML runs within
-  each paragraph concatenated) for use as the detection input
+- `extract_text(path) -> str` — concatenates all run texts per paragraph (body + table cells +
+  headers + footers), joins paragraphs with `\n`; used as the detection input
 - `apply_token_map(src, token_map, out)` — opens the original `.docx`, walks every paragraph in
   the body, table cells, headers, and footers; applies token replacement at the paragraph level;
   saves to `out` as a new `.docx` file
@@ -379,7 +379,7 @@ consumed by an AI, not a human reader.
 `_output_path` in `document.py` already produces the correct suffix with no changes.
 
 **Changes to existing code:**
-- `modes/document.py` — add suffix dispatch: `.docx` calls `extractors/docx.extract_paragraphs`
+- `modes/document.py` — add suffix dispatch: `.docx` calls `extractors/docx.extract_text`
   for detection text, then `extractors/docx.apply_token_map` for the output file
 - `cli.py` — no changes; `.docx` is already excluded from `_STRUCTURED_EXTENSIONS` and will
   appear in the document mode file picker automatically
@@ -392,7 +392,7 @@ consumed by an AI, not a human reader.
 
 ---
 
-### Stage 2: `.pdf` support
+### Stage 2: `.pdf` support `[implemented]`
 
 **New dependency:** `pdfplumber >= 0.10`
 
@@ -401,7 +401,7 @@ consumed by an AI, not a human reader.
 
 **New module:** `src/pseudoswapper/extractors/pdf.py`
 
-Single responsibility: `extract_text_from_pdf(path) -> str`
+Single responsibility: `extract_text(path) -> str`
 - Opens with `pdfplumber`, extracts text page by page
 - Joins pages with `\n\n`
 - Raises `UnsupportedFileError` if all pages yield empty text (scanned/image PDF — no OCR in v1)
@@ -422,7 +422,7 @@ For PDF inputs, the output suffix must be forced to `.txt`: `report.pdf` → `re
 This override is isolated to `modes/document.py` in the `.pdf` dispatch branch.
 
 **Changes to existing code:**
-- `modes/document.py` — add `.pdf` dispatch branch; call `extractors/pdf.extract_text_from_pdf`;
+- `modes/document.py` — add `.pdf` dispatch branch; call `extractors/pdf.extract_text`;
   override output suffix to `.txt` for PDF inputs
 - `cli.py` — no changes; `.pdf` is already excluded from `_STRUCTURED_EXTENSIONS`
 

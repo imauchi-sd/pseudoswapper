@@ -16,9 +16,10 @@ The token-to-value mapping is held in a temporary, user-only directory for the d
 
 ## Two modes
 
-**Document mode** — for prose: emails, reports, articles, freeform text, and Word documents (`.docx`).
+**Document mode** — for prose: emails, reports, articles, freeform text, Word documents (`.docx`), and PDFs (`.pdf`).
 Detects PII using a combination of exact-match config, regex patterns, and NLP (via [Presidio](https://github.com/microsoft/presidio) + spaCy `en_core_web_lg`).
 For `.docx` files, replacement is applied at the paragraph level and the output is a valid `.redacted.docx` file.
+For `.pdf` files, text is extracted and the output is a `.redacted.txt` file (layout is not preserved).
 
 **Structured mode** — for CSV, JSON, and XLSX files.
 Uses an anchor field (a unique identifier column like `employee_id` or `full_name`) to correlate all fields in a row to a single entity. The same anchor value always produces the same token across all rows, preserving relational integrity.
@@ -148,7 +149,7 @@ Run `pseudoswapper restore` from the same directory where you ran the redact com
 - Email-to-name inference is not attempted in Document mode. Use Structured mode with an anchor field for correlated data.
 - Single anchor field only — composite identity (e.g. `tenant_id` + `user_id`) is not supported in v1.
 - `.docx` is supported natively — output is a `.redacted.docx` file. Intra-paragraph run-level formatting (bold/italic on specific words) is lost in paragraphs that contain a replaced token.
-- `.pdf` is not yet supported — convert to `.txt` first (planned for Stage 2).
+- `.pdf` is supported natively — output is always a `.redacted.txt` file (layout not preserved). Scanned/image-only PDFs with no embedded text are not supported.
 
 See [`USER_GUIDE.md`](USER_GUIDE.md) for full documentation including anchor field selection, restoration behaviour, and all known limitations.
 
@@ -159,7 +160,7 @@ See [`USER_GUIDE.md`](USER_GUIDE.md) for full documentation including anchor fie
 ```bash
 source .venv/bin/activate
 pip install -e ".[dev]"
-python -m pytest          # 141 tests, all passing
+python -m pytest          # 152 tests, all passing
 ```
 
 **Python interpreter:** the project requires the `.venv` at the project root (Python 3.12). Always activate it before running any `python` or `pytest` commands.

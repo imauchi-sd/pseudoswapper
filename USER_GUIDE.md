@@ -39,16 +39,19 @@ Consistent tokenisation across a file is not cosmetic — it is what makes AI ou
 
 - It does not make network calls at any point during redact or restore.
 - It does not persist token mappings between sessions (v1).
-- It does not redact `.pdf` files — convert to `.txt` first (`.pdf` support is planned for a future release).
+- It does not support scanned or image-only PDFs (no embedded text layer) — convert to text first.
 - It does not guarantee 100% detection coverage for NLP-discovered entities (see [Known limitations](#7-known-limitations)).
 
 ---
 
 ## 2. Choosing a mode
 
-### Document mode — for prose and Word documents
+### Document mode — for prose, Word documents, and PDFs
 
-Use document mode for freeform text: emails, reports, articles, meeting notes, support tickets, log excerpts copy-pasted into a text file. Word documents (`.docx`) are also supported natively — the output is a valid `.redacted.docx` file with paragraph-level structure preserved.
+Use document mode for freeform text: emails, reports, articles, meeting notes, support tickets, log excerpts copy-pasted into a text file. Word documents (`.docx`) and PDFs (`.pdf`) are also supported natively.
+
+- `.docx` — output is a valid `.redacted.docx` file with paragraph-level structure preserved
+- `.pdf` — text is extracted from the PDF and output is a `.redacted.txt` file; layout is not preserved. Scanned/image-only PDFs (no embedded text) are not supported.
 
 Detection uses three layers in priority order:
 
@@ -76,7 +79,7 @@ The key difference: each row is treated as a self-contained entity bundle. You n
 ```
 Is your file a CSV, spreadsheet (.xlsx), or JSON array?
   → YES: use pseudoswapper structured
-  → NO:  use pseudoswapper document   (supports .txt, .log, .docx, and other text formats)
+  → NO:  use pseudoswapper document   (supports .txt, .log, .docx, .pdf, and other text formats)
 ```
 
 ---
@@ -294,7 +297,7 @@ pseudoswapper workdir --clear
 The work directory is saved to `~/.pseudoswapper_prefs.yaml` (separate from your config file, so it is never affected by `config --edit`).
 
 **File filtering by mode:**
-- `document` — shows all non-structured files (excludes `.csv`, `.json`, `.xlsx`); includes `.docx` and plain text files; excludes already-redacted output files
+- `document` — shows all non-structured files (excludes `.csv`, `.json`, `.xlsx`); includes `.docx`, `.pdf`, and plain text files; excludes already-redacted output files
 - `structured` — shows only `.csv`, `.json`, and `.xlsx` files, excluding already-redacted outputs
 - `restore` — shows all non-hidden files (AI output can be saved with any extension)
 
@@ -313,6 +316,10 @@ pseudoswapper document email_thread.txt
 pseudoswapper document report.docx
 # → writes report.redacted.docx
 
+# PDFs — output is always plain text regardless of input format
+pseudoswapper document report.pdf
+# → writes report.redacted.txt
+
 # Supply an employee roster for this run only
 pseudoswapper document report.txt --employees-csv ~/company_employees.csv
 
@@ -323,7 +330,7 @@ pseudoswapper document incident.log --passthrough IP
 pseudoswapper document incident.log --passthrough IP --passthrough DOMAIN
 ```
 
-Output is always written alongside the input file with a `.redacted` suffix inserted before the file extension: `name.txt` → `name.redacted.txt`, `name.docx` → `name.redacted.docx`.
+Output is written alongside the input file with a `.redacted` suffix. For `.pdf` inputs the output extension is always `.txt`: `name.txt` → `name.redacted.txt`, `name.docx` → `name.redacted.docx`, `name.pdf` → `name.redacted.txt`.
 
 **Note for `.docx` files:** Replacement happens at the paragraph level. If a paragraph contains a replaced value, any intra-paragraph run-level formatting (e.g. a bold word, an italic phrase) is lost within that paragraph. Paragraph-level formatting (font size, heading style, spacing) is preserved. This is intentional — the output is consumed by an AI, not a human reader.
 
@@ -503,15 +510,19 @@ When a paragraph in a `.docx` file contains a replaced value, all run-level form
 
 **Mitigation:** None — this is an inherent constraint of paragraph-level replacement. The output is intended for an AI assistant, not human reading, so formatting loss is acceptable. If an exact visual copy is required, convert to `.txt` first.
 
-### L8 (was L7) — No PDF support
+### L8 — PDF output is always plain text
 
-`.pdf` and other binary formats (beyond `.docx`) are not supported. Only `.txt` (and similar plain text) and `.docx` files work in Document mode. PDF support is planned for a future release.
+PDF input produces a `.redacted.txt` file, not a PDF. Layout, columns, tables, and formatting are not preserved in the output.
 
-**Mitigation:** Convert to `.txt` before redacting. In macOS:
+**Impact:** The AI receives the document's text content but not its visual structure. Multi-column layouts may extract in the wrong reading order.
+
+**Scanned/image PDFs:** PDFs with no embedded text (e.g. scanned documents saved as images) are not supported and will produce an error. Convert to searchable PDF or extract text via OCR first.
+
+**Mitigation:** None for layout loss — this is a fundamental constraint of PDF's format. For scanned PDFs, use an OCR tool to produce a searchable PDF or `.txt` first:
 
 ```bash
-# .pdf → .txt via pdftotext (part of poppler, install via homebrew)
-pdftotext report.pdf report.txt
+# macOS: use Automator's "Create PDF" with OCR, or a third-party OCR tool
+# Linux: ocrmypdf report-scanned.pdf report-searchable.pdf
 ```
 
 ### L9 (was L8) — passthrough_types leaves selected entity types in the clear

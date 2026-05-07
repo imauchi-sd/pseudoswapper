@@ -195,7 +195,7 @@ This is the authoritative list of known limitations to carry into USER_GUIDE.md.
 | L5 | AI may reformat tokens in output | Restoration regex fails to match | Fuzzy/case-insensitive restore matching |
 | L6 | NER false positives (common words as names) | Over-redaction | Add `exclude_terms` to YAML config |
 | L7 | DOCX intra-paragraph formatting loss | Bold/italic on individual words within a replaced paragraph is lost; paragraph-level style is preserved | Intentional trade-off — output is for AI consumption, not human reading |
-| L8 | No PDF support | Users must convert to .txt first | Document conversion step in guide; PDF support planned for Stage 2 |
+| L8 | PDF output is always plain text; scanned/image PDFs unsupported | Layout and formatting lost; image-only PDFs raise UnsupportedFileError | Documented limitation; scanned PDFs require OCR pre-processing |
 | L9 | Opaque ID anchors restore to the ID, not the person name | `[PERSON_1]` → `"E001"` rather than `"John Doe"` in restored AI output | Use `full_name` as anchor when human-readable restoration is required |
 | L10 | `passthrough_types` intentionally leaves selected entity types unreplaced | The AI assistant receives original values for bypassed types | Protected types (PERSON, EMAIL, COMPANY, ORG) cannot be bypassed; user is responsible for assessing sensitivity of bypassed types |
 
