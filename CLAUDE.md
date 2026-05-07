@@ -207,6 +207,12 @@ Document these prominently in USER_GUIDE.md:
    the redacted file. Only `PERSON`, `EMAIL`, `COMPANY`, and `ORG` are always protected. Users are
    responsible for assessing whether bypassed types (IP, DOMAIN, URL, PHONE, LOC) are safe to share
    in their specific context.
+9. **DOCX intra-paragraph formatting loss** — When a paragraph contains a replaced token, all
+   run-level formatting within that paragraph (e.g. a bold word, an italic phrase) is lost. The
+   paragraph's style (font size, spacing, heading level) is preserved. Planned Stage 1 limitation.
+10. **PDF output is always plain text** — PDF input is extracted to text and the redacted output is
+    written as `.redacted.txt`. PDF layout, columns, and tables are not preserved. Scanned/image
+    PDFs (no embedded text) produce an error — OCR is out of scope. Planned Stage 2 limitation.
 
 ---
 
@@ -228,14 +234,20 @@ pseudoswapper/
 │   ├── tokenizer.py            # DetectedEntity → token, person entity model
 │   ├── replacer.py             # Longest-match-first text replacement
 │   ├── restore.py              # Token reversal with fuzzy/case-insensitive match
-│   └── modes/
+│   ├── modes/
+│   │   ├── __init__.py
+│   │   ├── document.py         # Document mode orchestrator
+│   │   └── structured.py       # Structured mode (CSV / JSON / XLSX)
+│   └── extractors/             # Planned: rich-format extraction (Stage 1 + 2)
 │       ├── __init__.py
-│       ├── document.py         # Document mode orchestrator
-│       └── structured.py       # Structured mode (CSV / JSON / XLSX)
+│       ├── docx.py             # python-docx extractor + paragraph writer
+│       └── pdf.py              # pdfplumber text extractor
 └── tests/
     ├── conftest.py
     ├── fixtures/
     │   ├── sample_document.txt
+    │   ├── sample_document.docx    # planned Stage 1
+    │   ├── sample_document.pdf     # planned Stage 2
     │   ├── sample_structured.csv
     │   ├── sample_structured.json
     │   └── sample_structured.xlsx
@@ -247,7 +259,9 @@ pseudoswapper/
     ├── test_replacer.py
     ├── test_restore.py
     ├── test_document.py
-    └── test_structured.py
+    ├── test_structured.py
+    ├── test_docx.py               # planned Stage 1
+    └── test_pdf.py                # planned Stage 2
 ```
 
 ---
@@ -302,6 +316,16 @@ pandas>=2.0
 openpyxl>=3.1           # for .xlsx support via pandas
 ```
 
+Planned additions (rich format support):
+
+```
+python-docx>=1.1        # Stage 1: .docx extraction and round-trip writing
+pdfplumber>=0.10        # Stage 2: .pdf text extraction (MIT license)
+```
+
+`pymupdf` (fitz) was evaluated for Stage 2 and rejected: its AGPL license is incompatible with
+distribution. `pdfplumber` is sufficient and MIT licensed.
+
 ---
 
 ## Out of Scope for v1
@@ -311,4 +335,100 @@ openpyxl>=3.1           # for .xlsx support via pandas
 - Cloud sync or any network calls during redact/restore
 - Automatic email-to-name inference beyond same-row structured mode correlation
 - Composite anchor fields (multi-field identity)
-- Binary file formats beyond .xlsx (no .docx redaction in v1 — convert to .txt first)
+- Binary file formats beyond .xlsx — `.docx` and `.pdf` are planned (see below); all others require
+  manual conversion to `.txt` first
+
+---
+
+## Planned Extensions: Rich Format Support
+
+Document mode will be extended to handle `.docx` (Stage 1) and `.pdf` (Stage 2) natively. The
+detection and tokenisation pipeline is unchanged — only extraction and output writing differ. The
+dispatch lives in `modes/document.py` as a simple `if/elif/else` on the file suffix.
+
+---
+
+### Stage 1: `.docx` support
+
+**New dependency:** `python-docx >= 1.1`
+
+**New module:** `src/pseudoswapper/extractors/docx.py`
+
+Two responsibilities:
+- `extract_paragraphs(path) -> list[str]` — returns full paragraph strings (all XML runs within
+  each paragraph concatenated) for use as the detection input
+- `apply_token_map(src, token_map, out)` — opens the original `.docx`, walks every paragraph in
+  the body, table cells, headers, and footers; applies token replacement at the paragraph level;
+  saves to `out` as a new `.docx` file
+
+**The run-split problem.** `.docx` text is stored in `<w:r>` (run) XML elements. A single name
+like "John Doe" can span two runs if formatting changes mid-phrase (e.g. "Doe" is bolded):
+
+```xml
+<w:r><w:t>John </w:t></w:r>
+<w:r><w:rPr><w:b/></w:rPr><w:t>Doe</w:t></w:r>
+```
+
+Run-by-run replacement is blind to cross-run names. The solution is paragraph-level replacement:
+concatenate all run texts, apply the token map, then write back as a single new run inheriting the
+paragraph's style object. This loses intra-paragraph run-level formatting (e.g. a bold word within
+a paragraph becomes un-bolded in replaced paragraphs), which is acceptable because the output is
+consumed by an AI, not a human reader.
+
+**Output format:** `.redacted.docx` — same format, paragraph-level structure preserved.
+`_output_path` in `document.py` already produces the correct suffix with no changes.
+
+**Changes to existing code:**
+- `modes/document.py` — add suffix dispatch: `.docx` calls `extractors/docx.extract_paragraphs`
+  for detection text, then `extractors/docx.apply_token_map` for the output file
+- `cli.py` — no changes; `.docx` is already excluded from `_STRUCTURED_EXTENSIONS` and will
+  appear in the document mode file picker automatically
+
+**Known limitations (documented in USER_GUIDE.md):**
+- Intra-paragraph run-level formatting (bold/italic on individual words) is lost in any paragraph
+  containing a replaced token
+- Cross-paragraph names are not correlated (NER does not span paragraphs in practice)
+- Comments and tracked changes are not scanned
+
+---
+
+### Stage 2: `.pdf` support
+
+**New dependency:** `pdfplumber >= 0.10`
+
+`pymupdf` (fitz) was considered and rejected: AGPL license is incompatible with distribution.
+`pdfplumber` (MIT) is sufficient for text extraction.
+
+**New module:** `src/pseudoswapper/extractors/pdf.py`
+
+Single responsibility: `extract_text_from_pdf(path) -> str`
+- Opens with `pdfplumber`, extracts text page by page
+- Joins pages with `\n\n`
+- Raises `UnsupportedFileError` if all pages yield empty text (scanned/image PDF — no OCR in v1)
+
+**Output format: always `.redacted.txt`**, regardless of input extension.
+
+PDFs store drawing instructions, not a document model. Round-trip editing (extract → replace →
+write back as PDF with original layout) is not feasible. Three alternatives were considered:
+
+| Option | Verdict |
+|---|---|
+| Black-box redaction (paint rectangles over sensitive regions) | Rejected — AI cannot read redacted content |
+| Rebuild PDF via reportlab with replaced text | Rejected — loses layout anyway, high complexity |
+| Plain text output | **Chosen** — AI gets full content; restore works identically |
+
+**`_output_path` override:** The existing helper produces `report.pdf` → `report.redacted.pdf`.
+For PDF inputs, the output suffix must be forced to `.txt`: `report.pdf` → `report.redacted.txt`.
+This override is isolated to `modes/document.py` in the `.pdf` dispatch branch.
+
+**Changes to existing code:**
+- `modes/document.py` — add `.pdf` dispatch branch; call `extractors/pdf.extract_text_from_pdf`;
+  override output suffix to `.txt` for PDF inputs
+- `cli.py` — no changes; `.pdf` is already excluded from `_STRUCTURED_EXTENSIONS`
+
+**Known limitations (documented in USER_GUIDE.md):**
+- Output is always `.txt` — PDF layout and formatting are not preserved
+- Multi-column layouts may extract in wrong reading order (pdfplumber mitigates but does not
+  eliminate this)
+- Scanned/image PDFs produce an error; OCR is out of scope for v1
+- Table content embedded in PDFs may have cell-ordering artifacts

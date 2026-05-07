@@ -24,15 +24,19 @@ pseudoswapper/
 │       ├── tokenizer.py                # DetectedEntity → token, person entity model
 │       ├── replacer.py                 # Longest-match-first text replacement
 │       ├── restore.py                  # Token reversal with fuzzy/case-insensitive match
-│       └── modes/
+│       ├── modes/
+│       │   ├── __init__.py
+│       │   ├── document.py             # Document mode orchestrator (dispatches on file suffix)
+│       │   └── structured.py          # Structured mode (CSV / JSON / XLSX)
+│       └── extractors/
 │           ├── __init__.py
-│           ├── document.py             # Document mode orchestrator
-│           └── structured.py          # Structured mode (CSV / JSON / XLSX)
+│           └── docx.py                # python-docx paragraph extractor + token writer
 └── tests/
     ├── __init__.py
     ├── conftest.py                     # Shared config builders, tmp_path helpers
     ├── fixtures/
     │   ├── sample_document.txt         # Fake-but-realistic prose with PII
+    │   ├── sample_document.docx        # Same content as .txt; "Doe" in split run for run-split test
     │   ├── sample_structured.csv
     │   ├── sample_structured.json
     │   └── sample_structured.xlsx
@@ -44,7 +48,8 @@ pseudoswapper/
     ├── test_replacer.py
     ├── test_restore.py
     ├── test_document.py
-    └── test_structured.py
+    ├── test_structured.py
+    └── test_docx.py                    # 11 tests for .docx document mode support
 ```
 
 ---
@@ -62,8 +67,9 @@ pseudoswapper/
 | `tokenizer.py` | Takes `list[DetectedEntity]` + raw text → `dict[original_text → token]`. Owns the person entity model: on first encounter of a full name, registers first/last surface forms too. Owns correlated email logic for structured mode. |
 | `replacer.py` | Takes text + token map → redacted text. Sorts replacements longest-first so full names are caught before their parts. |
 | `restore.py` | Finds all `[TOKEN_N]` patterns in text via regex. Looks up each in the entity registry's reverse map. Case-insensitive matching to tolerate AI reformatting. |
-| `modes/document.py` | Orchestrates document mode: read file → pre-register YAML employees → detect → tokenize → replace → write `.redacted` output → save session. |
+| `modes/document.py` | Orchestrates document mode: dispatches on file suffix (`.docx` vs plain text) → pre-register YAML employees → detect → tokenize → replace → write `.redacted` output → save session. |
 | `modes/structured.py` | Orchestrates structured mode: reads CSV/JSON/XLSX → determines anchor field → processes row by row → writes `.redacted` output → saves session. |
+| `extractors/docx.py` | `extract_text(path)` — concatenates all paragraph runs for PII detection. `apply_token_map(src, token_map, out)` — paragraph-level replacement written to a new `.docx` file. |
 
 ---
 
@@ -356,6 +362,37 @@ load .pseudoswapper_session → temp session path
 **Implementation notes**
 - USER_GUIDE.md includes a documented design note (L5) explaining that opaque-ID anchors (`employee_id = "E001"`) restore `[PERSON_1]` to the ID value, not the full name — and the mitigation (use `full_name` as anchor when human-readable restoration is required). This was discovered during Phase 6 round-trip testing.
 - Error handling in `cli.py` uses a consistent pattern: `ConfigError` is caught at config load; all other exceptions from domain functions are caught generically and emitted on stderr with `err=True`. No raw tracebacks reach the user in normal operation.
+
+---
+
+### Stage 1 — DOCX support `[x]`
+
+**New dependency:** `python-docx >= 1.1` (added to `pyproject.toml`)
+
+**Deliverables**
+- `src/pseudoswapper/extractors/__init__.py` — package marker
+- `src/pseudoswapper/extractors/docx.py`
+  - `extract_text(path) -> str` — opens `.docx` with python-docx, concatenates all run texts per paragraph (body + table cells + headers + footers), joins paragraphs with `\n`; used as the detection input
+  - `apply_token_map(src, token_map, out)` — opens the original `.docx`, applies longest-match-first token replacement at the paragraph level (clears all runs, writes a single new run per modified paragraph), saves to `out`
+- `src/pseudoswapper/modes/document.py` — refactored: `redact_document()` now dispatches on file suffix; `.docx` calls `_redact_docx()`; plain text calls `_redact_plain()`; `_output_path()` accepts optional `force_suffix` argument (unused by docx but scaffolds Stage 2 PDF)
+- `tests/fixtures/sample_document.docx` — mirrors `sample_document.txt`; paragraph 3 ("John Doe joined the call...") has "Doe" in a separate bold run to exercise the run-split case
+- `tests/test_docx.py` — 11 tests
+
+**The run-split problem:** `.docx` stores text in `<w:r>` XML run elements. A name like "John Doe" can span two runs if formatting changes mid-name. Run-by-run replacement misses cross-run names. Solution: concatenate all runs per paragraph for detection, then apply replacement to the whole paragraph string and write back as a single run. This loses intra-paragraph run-level formatting in replaced paragraphs (documented limitation).
+
+**Tests**
+- Output file is `.redacted.docx`, exists alongside input — PASS
+- Output is a valid `.docx` file (parseable by python-docx) — PASS
+- Output written alongside input — PASS
+- Employee name replaced with `[PERSON_N]` token — PASS
+- Company term replaced with `[COMPANY_N]` token — PASS
+- Email replaced with `[EMAIL_N]` token — PASS
+- Same token emitted for same name across multiple paragraphs — PASS
+- Two distinct employees get distinct person tokens — PASS
+- Run-split name ("John " + "Doe" in separate runs) detected and replaced — PASS
+- Passthrough IP preserved while name is replaced — PASS
+- Full fixture contains no known PII — PASS
+- 11 tests, all passing. Existing 130 tests unaffected (141 total).
 
 ---
 

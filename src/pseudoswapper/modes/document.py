@@ -21,8 +21,48 @@ def _pre_register_employees(config: dict, tokenizer: Tokenizer) -> None:
             tokenizer._registry.register_alias(username, token)
 
 
-def _output_path(input_path: Path) -> Path:
-    return input_path.parent / f"{input_path.stem}.redacted{input_path.suffix}"
+def _output_path(input_path: Path, force_suffix: str | None = None) -> Path:
+    suffix = force_suffix if force_suffix else input_path.suffix
+    return input_path.parent / f"{input_path.stem}.redacted{suffix}"
+
+
+def _build_pipeline(config: dict, passthrough_types: set[str] | None):
+    registry = EntityRegistry()
+    tokenizer = Tokenizer(registry, passthrough_types=passthrough_types)
+    detector = Detector(config)
+    _pre_register_employees(config, tokenizer)
+    return registry, tokenizer, detector
+
+
+def _save(registry: EntityRegistry, cwd: Path) -> None:
+    if session_exists(cwd):
+        save_session(registry, cwd)
+    else:
+        create_session(registry, cwd)
+
+
+def _redact_plain(file: Path, config: dict, cwd: Path, passthrough_types: set[str] | None) -> Path:
+    registry, tokenizer, detector = _build_pipeline(config, passthrough_types)
+    text = file.read_text(encoding="utf-8", errors="replace")
+    entities = detector.analyze(text)
+    token_map = tokenizer.assign(entities)
+    redacted_text = replace(text, token_map)
+    out = _output_path(file)
+    out.write_text(redacted_text, encoding="utf-8")
+    _save(registry, cwd)
+    return out
+
+
+def _redact_docx(file: Path, config: dict, cwd: Path, passthrough_types: set[str] | None) -> Path:
+    from pseudoswapper.extractors.docx import apply_token_map, extract_text
+    registry, tokenizer, detector = _build_pipeline(config, passthrough_types)
+    text = extract_text(file)
+    entities = detector.analyze(text)
+    token_map = tokenizer.assign(entities)
+    out = _output_path(file)
+    apply_token_map(file, token_map, out)
+    _save(registry, cwd)
+    return out
 
 
 def redact_document(
@@ -32,23 +72,7 @@ def redact_document(
     passthrough_types: set[str] | None = None,
 ) -> Path:
     """Run document mode: detect, tokenize, replace, write output, save session."""
-    registry = EntityRegistry()
-    tokenizer = Tokenizer(registry, passthrough_types=passthrough_types)
-    detector = Detector(config)
-
-    _pre_register_employees(config, tokenizer)
-
-    text = file.read_text(encoding="utf-8", errors="replace")
-    entities = detector.analyze(text)
-    token_map = tokenizer.assign(entities)
-    redacted_text = replace(text, token_map)
-
-    out = _output_path(file)
-    out.write_text(redacted_text, encoding="utf-8")
-
-    if session_exists(cwd):
-        save_session(registry, cwd)
-    else:
-        create_session(registry, cwd)
-
-    return out
+    suffix = file.suffix.lower()
+    if suffix == ".docx":
+        return _redact_docx(file, config, cwd, passthrough_types)
+    return _redact_plain(file, config, cwd, passthrough_types)

@@ -39,16 +39,16 @@ Consistent tokenisation across a file is not cosmetic — it is what makes AI ou
 
 - It does not make network calls at any point during redact or restore.
 - It does not persist token mappings between sessions (v1).
-- It does not redact `.docx` or `.pdf` files — convert to `.txt` first.
+- It does not redact `.pdf` files — convert to `.txt` first (`.pdf` support is planned for a future release).
 - It does not guarantee 100% detection coverage for NLP-discovered entities (see [Known limitations](#7-known-limitations)).
 
 ---
 
 ## 2. Choosing a mode
 
-### Document mode — for prose
+### Document mode — for prose and Word documents
 
-Use document mode for freeform text: emails, reports, articles, meeting notes, support tickets, log excerpts copy-pasted into a text file.
+Use document mode for freeform text: emails, reports, articles, meeting notes, support tickets, log excerpts copy-pasted into a text file. Word documents (`.docx`) are also supported natively — the output is a valid `.redacted.docx` file with paragraph-level structure preserved.
 
 Detection uses three layers in priority order:
 
@@ -76,7 +76,7 @@ The key difference: each row is treated as a self-contained entity bundle. You n
 ```
 Is your file a CSV, spreadsheet (.xlsx), or JSON array?
   → YES: use pseudoswapper structured
-  → NO:  use pseudoswapper document
+  → NO:  use pseudoswapper document   (supports .txt, .log, .docx, and other text formats)
 ```
 
 ---
@@ -294,7 +294,7 @@ pseudoswapper workdir --clear
 The work directory is saved to `~/.pseudoswapper_prefs.yaml` (separate from your config file, so it is never affected by `config --edit`).
 
 **File filtering by mode:**
-- `document` — shows all non-structured files (excludes `.csv`, `.json`, `.xlsx`) and excludes already-redacted output files
+- `document` — shows all non-structured files (excludes `.csv`, `.json`, `.xlsx`); includes `.docx` and plain text files; excludes already-redacted output files
 - `structured` — shows only `.csv`, `.json`, and `.xlsx` files, excluding already-redacted outputs
 - `restore` — shows all non-hidden files (AI output can be saved with any extension)
 
@@ -309,6 +309,10 @@ pseudoswapper document report.txt
 pseudoswapper document email_thread.txt
 # → writes email_thread.redacted.txt
 
+# Word documents — output is a valid .docx file, not plain text
+pseudoswapper document report.docx
+# → writes report.redacted.docx
+
 # Supply an employee roster for this run only
 pseudoswapper document report.txt --employees-csv ~/company_employees.csv
 
@@ -319,7 +323,9 @@ pseudoswapper document incident.log --passthrough IP
 pseudoswapper document incident.log --passthrough IP --passthrough DOMAIN
 ```
 
-Output is always written alongside the input file with a `.redacted` suffix inserted before the file extension: `name.txt` → `name.redacted.txt`.
+Output is always written alongside the input file with a `.redacted` suffix inserted before the file extension: `name.txt` → `name.redacted.txt`, `name.docx` → `name.redacted.docx`.
+
+**Note for `.docx` files:** Replacement happens at the paragraph level. If a paragraph contains a replaced value, any intra-paragraph run-level formatting (e.g. a bold word, an italic phrase) is lost within that paragraph. Paragraph-level formatting (font size, heading style, spacing) is preserved. This is intentional — the output is consumed by an AI, not a human reader.
 
 ### Structured mode
 
@@ -489,18 +495,26 @@ spaCy may interpret common English words as person names — "Will", "May", "Mar
 
 **Mitigation:** Add the affected terms to `exclude_terms` in your YAML config.
 
-### L7 — No binary file support in v1
+### L7 — DOCX intra-paragraph formatting loss
 
-`.docx`, `.pdf`, and other binary formats are not supported. Only `.txt` (and similar plain text) files work in Document mode.
+When a paragraph in a `.docx` file contains a replaced value, all run-level formatting within that paragraph is lost. For example, if "John Doe" appears in a paragraph where "Doe" is bolded, the replacement removes that bold. Paragraph-level formatting (heading style, font size, line spacing) is preserved.
+
+**Impact:** The redacted `.docx` is structurally valid and fully readable, but may look visually different from the original in paragraphs that contained PII.
+
+**Mitigation:** None — this is an inherent constraint of paragraph-level replacement. The output is intended for an AI assistant, not human reading, so formatting loss is acceptable. If an exact visual copy is required, convert to `.txt` first.
+
+### L8 (was L7) — No PDF support
+
+`.pdf` and other binary formats (beyond `.docx`) are not supported. Only `.txt` (and similar plain text) and `.docx` files work in Document mode. PDF support is planned for a future release.
 
 **Mitigation:** Convert to `.txt` before redacting. In macOS:
 
 ```bash
-# .docx → .txt via pandoc
-pandoc -t plain report.docx -o report.txt
+# .pdf → .txt via pdftotext (part of poppler, install via homebrew)
+pdftotext report.pdf report.txt
 ```
 
-### L8 — passthrough_types leaves selected entity types in the clear
+### L9 (was L8) — passthrough_types leaves selected entity types in the clear
 
 When `passthrough_types` is configured or `--passthrough` is used, the listed entity types are not tokenized and appear as-is in the redacted file. This is intentional — but it means the AI assistant receives those original values.
 
