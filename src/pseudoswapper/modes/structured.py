@@ -5,7 +5,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+from pseudoswapper.detector import Detector
 from pseudoswapper.entity_registry import EntityRegistry
+from pseudoswapper.replacer import replace
 from pseudoswapper.session import create_session, save_session, session_exists
 from pseudoswapper.tokenizer import Tokenizer
 
@@ -64,12 +66,33 @@ def _cell_str(value: Any) -> str:
     return "" if s.lower() in ("nan", "none", "<na>") else s
 
 
+def _redact_cell(val: str, detector: Detector, tokenizer: Tokenizer) -> str:
+    """Detect and tokenize PII in a single cell value.
+
+    When detected spans cover ≥70% of the cell and at least one is PERSON,
+    the whole value is treated as a compound person name rather than doing
+    span-level replacement. This prevents last-name/first-name fields in
+    "Last, First" format from being split into ORG + PERSON tokens.
+    """
+    entities = detector.analyze(val)
+    if not entities:
+        return val
+    has_person = any(e.entity_type == "PERSON" for e in entities)
+    if has_person:
+        covered = sum(e.end - e.start for e in entities)
+        if covered / len(val) >= 0.7:
+            return tokenizer._assign_person(val)
+    token_map = tokenizer.assign(entities)
+    return replace(val, token_map)
+
+
 def _process_rows(
     rows: list[dict],
     anchor_field: str | None,
     config: dict,
     tokenizer: Tokenizer,
     registry: EntityRegistry,
+    detector: Detector,
 ) -> list[dict]:
     correlated: set[str] = set(
         (config.get("structured") or {}).get("correlated_fields", [])
@@ -86,9 +109,7 @@ def _process_rows(
                 val = _cell_str(value)
                 if not val:
                     continue
-                existing = registry.lookup(val)
-                if existing:
-                    out[field] = existing
+                out[field] = _redact_cell(val, detector, tokenizer)
             result_rows.append(out)
             continue
 
@@ -140,16 +161,14 @@ def _process_rows(
                 registry.register_alias(val, person_token)
                 out[field] = person_token
 
-        # ── Remaining fields — registry-only lookup ──────────────────────
+        # ── Remaining fields — detect then registry lookup ───────────────
         for field, value in row.items():
             if field == anchor_field or field in correlated:
                 continue
             val = _cell_str(value)
             if not val:
                 continue
-            existing = registry.lookup(val)
-            if existing:
-                out[field] = existing
+            out[field] = _redact_cell(val, detector, tokenizer)
 
         result_rows.append(out)
 
@@ -206,12 +225,13 @@ def redact_structured(
 
     registry = EntityRegistry()
     tokenizer = Tokenizer(registry)
+    detector = Detector(config)
     _pre_register_employees(config, tokenizer)
 
     rows, columns = _read_file(file)
     anchor_field = _resolve_anchor(columns, cli_anchor, config)
 
-    processed = _process_rows(rows, anchor_field, config, tokenizer, registry)
+    processed = _process_rows(rows, anchor_field, config, tokenizer, registry, detector)
 
     out = _output_path(file)
     _write_file(processed, columns, out)
