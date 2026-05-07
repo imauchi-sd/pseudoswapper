@@ -127,6 +127,20 @@ employees:
     email: j.smith@acme.com
     username: jsmith
 
+# For large rosters, point to a CSV file (full_name required; email, username optional)
+# employees_csv: ~/company_employees.csv
+
+# Entity types to leave unreplaced (bypassable only: IP, DOMAIN, URL, PHONE, LOC)
+# PERSON, EMAIL, COMPANY, ORG are always tokenized and cannot appear here
+# passthrough_types:
+#   - IP
+#   - DOMAIN
+
+# Words to exclude from NLP detection (prevents over-redaction of common names)
+# exclude_terms:
+#   - May
+#   - Will
+
 # Structured mode settings
 structured:
   anchor_field: employee_id         # overrides auto-detection
@@ -135,6 +149,8 @@ structured:
     - username
     - display_name
     - full_name
+  force_fields:                     # columns to always tokenize unconditionally
+    - "Last name, First name"
 ```
 
 ---
@@ -171,7 +187,8 @@ corroboration check within the same row. Best-effort, not guaranteed.
 
 Document these prominently in USER_GUIDE.md:
 
-1. **NER misses** — spaCy may miss names in non-prose structures. Mitigate with YAML employee list.
+1. **NER misses** — spaCy may miss names in non-prose structures. Mitigate with YAML employee list
+   or `force_fields` in structured mode.
 2. **Email inference is imperfect** — Non-standard formats (`jd@`, `john_d@`) won't auto-correlate
    in Document mode. Structured mode with explicit anchor is the solution.
 3. **Composite identity** — Systems requiring two fields to uniquely identify a person (e.g.
@@ -182,10 +199,14 @@ Document these prominently in USER_GUIDE.md:
 5. **Restoration tolerance** — AI output may reformat tokens (case changes, markdown wrapping).
    Restoration logic must use fuzzy/case-insensitive matching to catch common variants.
 6. **NER false positives** — Common words that are also names may be over-redacted. YAML can
-   explicitly exclude terms if needed (add an `exclude_terms` list to config).
+   explicitly exclude terms if needed (`exclude_terms` list in config).
 7. **Opaque ID anchors restore to the ID, not the name** — When an ID field (e.g. `employee_id =
    "E001"`) is the anchor, `[PERSON_1]` restores to `"E001"`. If human-readable name restoration
    is needed, use `full_name` as the anchor field instead.
+8. **passthrough_types is a deliberate privacy trade-off** — Bypassed entity types appear as-is in
+   the redacted file. Only `PERSON`, `EMAIL`, `COMPANY`, and `ORG` are always protected. Users are
+   responsible for assessing whether bypassed types (IP, DOMAIN, URL, PHONE, LOC) are safe to share
+   in their specific context.
 
 ---
 
@@ -236,11 +257,15 @@ pseudoswapper/
 ```bash
 # Document mode
 pseudoswapper document report.txt
+pseudoswapper document report.txt --employees-csv ~/employees.csv
+pseudoswapper document incident.log --passthrough IP --passthrough DOMAIN
 
 # Structured mode
 pseudoswapper structured access_logs.csv --anchor user_id
 pseudoswapper structured employees.json --anchor user.id
 pseudoswapper structured data.xlsx --anchor employee_id
+pseudoswapper structured data.xlsx --anchor employee_id --force-fields "Last name, First name"
+pseudoswapper structured access_logs.csv --anchor user_id --passthrough IP
 
 # Restore (mode-agnostic)
 pseudoswapper restore ai_output.txt
@@ -248,9 +273,15 @@ pseudoswapper restore ai_output.txt
 # Session management
 pseudoswapper clear-session          # abandon a session and delete all artifacts
 
+# Work directory (omit file argument to pick interactively)
+pseudoswapper workdir --set ~/Documents/sensitive-files
+pseudoswapper workdir --show
+pseudoswapper workdir --clear
+
 # Config helpers
-pseudoswapper config --show
-pseudoswapper config --edit
+pseudoswapper config --summary       # human-readable view of what will be tokenized
+pseudoswapper config --show          # raw YAML dump
+pseudoswapper config --edit          # open in $EDITOR
 ```
 
 Output files should be written alongside the input file with a `.redacted` suffix.

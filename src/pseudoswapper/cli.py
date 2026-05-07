@@ -15,6 +15,103 @@ app = typer.Typer(
 
 _STRUCTURED_EXTENSIONS = {".csv", ".json", ".xlsx"}
 
+_PROTECTED_TYPE_DESCRIPTIONS: dict[str, str] = {
+    "PERSON":  "person names — NLP + pre-registered employees",
+    "EMAIL":   "email addresses",
+    "COMPANY": "YAML company_terms + NLP organisation matches",
+    "ORG":     "organisation names (NLP)",
+}
+
+_BYPASSABLE_TYPE_DESCRIPTIONS: dict[str, str] = {
+    "PHONE":  "phone numbers",
+    "IP":     "IP addresses",
+    "DOMAIN": "domain names",
+    "URL":    "URLs",
+    "LOC":    "locations (NLP)",
+}
+
+_RULE_WIDTH = 58
+
+
+def _rule(char: str = "─") -> None:
+    typer.echo(char * _RULE_WIDTH)
+
+
+def _print_config_summary(config: dict) -> None:
+    from pseudoswapper.tokenizer import PROTECTED_TYPES
+
+    passthrough: set[str] = (
+        {t.upper() for t in config.get("passthrough_types", [])} - PROTECTED_TYPES
+    )
+
+    typer.echo("")
+    typer.echo("pseudoswapper — detection summary")
+    _rule("═")
+
+    # ── Entity types ──────────────────────────────────────────────────────────
+    typer.echo("ENTITY TYPES\n")
+    typer.echo("  Always tokenized (protected)")
+    for t, desc in _PROTECTED_TYPE_DESCRIPTIONS.items():
+        typer.echo(f"    {f'[{t}]':<12}{desc}")
+
+    active   = {t: d for t, d in _BYPASSABLE_TYPE_DESCRIPTIONS.items() if t not in passthrough}
+    bypassed = {t: d for t, d in _BYPASSABLE_TYPE_DESCRIPTIONS.items() if t in passthrough}
+
+    if active:
+        typer.echo("\n  Tokenized")
+        for t, desc in active.items():
+            typer.echo(f"    {f'[{t}]':<12}{desc}")
+
+    if bypassed:
+        typer.echo("\n  Bypassed — will appear as-is in redacted output")
+        for t, desc in bypassed.items():
+            typer.echo(f"    {f'[{t}]':<12}{desc}")
+
+    # ── Exact-match terms ─────────────────────────────────────────────────────
+    typer.echo("")
+    _rule()
+    company_terms = config.get("company_terms", [])
+    typer.echo(f"EXACT-MATCH TERMS  ({len(company_terms)} configured)")
+    if company_terms:
+        for term in company_terms:
+            typer.echo(f"  {term}")
+    else:
+        typer.echo("  (none)")
+
+    # ── Pre-registered employees ──────────────────────────────────────────────
+    typer.echo("")
+    _rule()
+    employees = config.get("employees", [])
+    typer.echo(f"PRE-REGISTERED EMPLOYEES  ({len(employees)})")
+    if employees:
+        for emp in employees:
+            name = emp.get("full_name", "")
+            extras = [emp[k] for k in ("email", "username") if emp.get(k)]
+            suffix = ("   " + "   ".join(extras)) if extras else ""
+            typer.echo(f"  {name}{suffix}")
+    else:
+        typer.echo("  (none)")
+
+    # ── Excluded from NLP ─────────────────────────────────────────────────────
+    typer.echo("")
+    _rule()
+    exclude = config.get("exclude_terms", [])
+    typer.echo(f"EXCLUDED FROM NLP  ({len(exclude)} terms)")
+    typer.echo(f"  {', '.join(str(t) for t in exclude)}" if exclude else "  (none)")
+
+    # ── Structured mode ───────────────────────────────────────────────────────
+    typer.echo("")
+    _rule()
+    st = config.get("structured", {})
+    anchor     = st.get("anchor_field") or "(auto-detect)"
+    correlated = st.get("correlated_fields", [])
+    force      = st.get("force_fields", [])
+    typer.echo("STRUCTURED MODE")
+    typer.echo(f"  Anchor field:      {anchor}")
+    typer.echo(f"  Correlated fields: {', '.join(correlated) if correlated else '(none)'}")
+    typer.echo(f"  Force-tokenized:   {', '.join(force) if force else '(none)'}")
+    typer.echo("")
+
 
 def _pick_file(work_dir: Path, mode: str) -> Path:
     """Interactively pick a file from *work_dir* filtered by *mode*."""
@@ -288,13 +385,25 @@ def clear_session_cmd() -> None:
 
 @app.command(name="config")
 def config_cmd(
-    show: bool = typer.Option(False, "--show", help="Print the active config"),
+    show: bool = typer.Option(False, "--show", help="Print the active config as YAML"),
     edit: bool = typer.Option(False, "--edit", help="Open config in $EDITOR"),
+    summary: bool = typer.Option(
+        False, "--summary",
+        help="Show a human-readable summary of what will be tokenized",
+    ),
 ) -> None:
     """View or edit the pseudoswapper config file."""
-    if not show and not edit:
-        typer.echo("Use --show to print config or --edit to open it in $EDITOR.")
+    if not show and not edit and not summary:
+        typer.echo("Use --show, --summary, or --edit.")
         raise typer.Exit(1)
+
+    if summary:
+        try:
+            config = load_config()
+        except ConfigError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+        _print_config_summary(config)
 
     if show:
         try:

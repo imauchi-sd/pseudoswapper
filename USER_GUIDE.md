@@ -97,8 +97,11 @@ Then edit it:
 
 ```bash
 pseudoswapper config --edit       # opens in $EDITOR
-pseudoswapper config --show       # prints the active config
+pseudoswapper config --show       # prints the active config as raw YAML
+pseudoswapper config --summary    # human-readable summary of what will be tokenized
 ```
+
+`--summary` is the quickest way to verify your config after making changes — it shows entity type coverage, all configured terms and employees, and structured mode settings in a single view.
 
 ### company_terms
 
@@ -496,6 +499,14 @@ spaCy may interpret common English words as person names — "Will", "May", "Mar
 # .docx → .txt via pandoc
 pandoc -t plain report.docx -o report.txt
 ```
+
+### L8 — passthrough_types leaves selected entity types in the clear
+
+When `passthrough_types` is configured or `--passthrough` is used, the listed entity types are not tokenized and appear as-is in the redacted file. This is intentional — but it means the AI assistant receives those original values.
+
+**Impact:** The AI sees real IP addresses, domain names, URLs, phone numbers, or locations — whichever types you bypassed.
+
+**Mitigation:** Only bypass types whose values you are comfortable sharing. Protected types (`PERSON`, `EMAIL`, `COMPANY`, `ORG`) cannot be bypassed regardless of configuration. Use `pseudoswapper config --summary` to confirm exactly what will and won't be tokenized before running a redaction.
 
 ---
 

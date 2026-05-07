@@ -81,7 +81,10 @@ pseudoswapper restore ai_output.txt
 pseudoswapper restore             # → prompts file selection from work directory
 # → writes ai_output.restored.txt
 
-# Inspect or edit the active config
+# Show a human-readable summary of what will be tokenized
+pseudoswapper config --summary
+
+# Inspect or edit the raw config YAML
 pseudoswapper config --show
 pseudoswapper config --edit
 
@@ -154,9 +157,9 @@ See [`USER_GUIDE.md`](USER_GUIDE.md) for full documentation including anchor fie
 ```bash
 source .venv/bin/activate
 pip install -e ".[dev]"
-python -m pytest          # 118 tests, all passing
+python -m pytest          # 130 tests, all passing
 ```
 
-**Python interpreter:** the project requires the `.venv` at the project root (Python 3.12). Always activate it before running any `python` or `pytest` commands. If you use Claude Code, `.claude/settings.json` prepends `.venv/bin` to `PATH` automatically at session start — no manual activation needed there.
+**Python interpreter:** the project requires the `.venv` at the project root (Python 3.12). Always activate it before running any `python` or `pytest` commands.
 
 Project layout and phase-by-phase build plan: [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
