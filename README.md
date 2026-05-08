@@ -4,15 +4,25 @@
 
 A local CLI tool for tokenising sensitive data in files before sharing them with AI assistants.
 
-All processing happens on your machine. No sensitive data or token mappings ever leave your device.
+All processing happens on your machine. No sensitive data or token mappings ever leave your device. Designed for temporary, one-off use — each redact → restore cycle is self-contained and leaves no persistent artefacts. Unlike tools that use encryption keys to support long-term reversible anonymisation, pseudoswapper requires no key management: the mapping exists only for the duration of a single session and is deleted automatically after restore.
 
 ---
 
 ## What it does
 
-Before you share a document or data file with an AI assistant, `pseudoswapper` scans it and replaces sensitive values — names, email addresses, phone numbers, domains, company identifiers — with human-readable tokens like `[PERSON_1]`, `[EMAIL_2]`, `[COMPANY_1]`. You share the tokenised file. When the AI returns its output, you run `pseudoswapper restore` and the original values are substituted back in.
+Before you share a document or data file with an AI assistant — or any untrusted or public tool — `pseudoswapper` scans it and replaces sensitive values — names, email addresses, phone numbers, domains, company identifiers — with human-readable tokens like `[PERSON_1]`, `[EMAIL_2]`, `[COMPANY_1]`. You share the tokenised file. When the AI returns its output, you run `pseudoswapper restore` and the original values are substituted back in.
 
 The token-to-value mapping is held in a temporary, user-only directory for the duration of the session and deleted automatically after a successful restore. Nothing is written to a persistent file.
+
+---
+
+## When to use it
+
+- You want to ask an AI assistant (ChatGPT, Claude, Gemini, Copilot) to review, summarise, or analyse a document that contains real names, email addresses, or internal identifiers
+- You need to upload a file to an online conversion, translation, or analysis service and don't want to expose its contents
+- You're sharing data with a contractor or external collaborator via a tool or platform you don't fully control
+- You're running a log file, support ticket, or incident report through a third-party debugging or analysis service
+- You want to share the structure and content of a dataset for analysis without revealing who or what it relates to
 
 ---
 

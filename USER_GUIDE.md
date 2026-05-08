@@ -18,12 +18,14 @@
 
 ### The problem it solves
 
-You have a document or data file containing sensitive information — employee names, email addresses, internal project names, server IPs — and you want to share it with an AI assistant for analysis, summarisation, or refactoring. Manually removing and re-inserting those values is tedious and error-prone.
+You have a document or data file containing sensitive information — employee names, email addresses, internal project names, server IPs — and you want to share it with an AI assistant, an online service, or any other untrusted or public tool for analysis, summarisation, or refactoring. Manually removing and re-inserting those values is tedious and error-prone.
 
 `pseudoswapper` automates both halves:
 
 1. **Redact** — scan the file, replace each sensitive value with a human-readable token (`[PERSON_1]`, `[EMAIL_2]`, `[COMPANY_1]`), write the tokenised file.
-2. **Restore** — after the AI returns its output, swap all tokens back to the original values.
+2. **Restore** — after the tool returns its output, swap all tokens back to the original values.
+
+It is designed for temporary, one-off use. Each redact → restore cycle is self-contained: the mapping exists only for the duration of the session and is deleted automatically after restore. No encryption keys to manage, nothing left on disk.
 
 ### What never leaves your machine
 

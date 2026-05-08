@@ -7,14 +7,19 @@ It serves as a reference for implementation decisions and for the USER_GUIDE.md 
 
 ## Problem Statement
 
-Employees using personal AI subscriptions for work tasks need to share files containing sensitive
-company data (names, emails, domains, internal identifiers) with those AI assistants. Manually
-redacting and then re-applying values is error-prone and time-consuming.
+Employees need to share files containing sensitive company data (names, emails, domains, internal
+identifiers) with AI assistants, online services, or other untrusted or public tools for analysis,
+summarisation, or refactoring. Manually redacting and then re-applying values is error-prone and
+time-consuming.
+
+The tool is designed for temporary, one-off use — each redact → restore cycle is self-contained.
+Unlike persistent anonymisation approaches that require managing encryption keys, pseudoswapper
+holds the mapping only for the duration of a session and deletes it automatically after restore.
 
 The tool must:
 - Make redaction and restoration fast and low-friction
 - Keep all sensitive data and mappings strictly local (never leave the user's machine)
-- Maintain the relational integrity of the data so the AI receives coherent, usable content
+- Maintain the relational integrity of the data so the recipient tool receives coherent, usable content
 - Be simple enough that non-technical users can operate it with a short guide
 
 ---
