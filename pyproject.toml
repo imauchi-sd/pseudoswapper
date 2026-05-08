@@ -6,7 +6,25 @@ build-backend = "setuptools.build_meta"
 name = "pseudoswapper"
 version = "0.1.0"
 description = "Local CLI tool for tokenising sensitive data before sharing with AI assistants"
-requires-python = ">=3.9"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "David Au", email = "imauchi.sd@gmail.com"}
+]
+keywords = ["privacy", "redaction", "pii", "data-masking", "pseudonymization", "tokenization", "ai", "cli"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+    "Intended Audience :: End Users/Desktop",
+    "Topic :: Security",
+    "Topic :: Text Processing",
+    "Topic :: Utilities",
+    "Development Status :: 4 - Beta",
+]
+requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
     "pyyaml>=6.0",
@@ -27,6 +45,12 @@ dev = [
 
 [project.scripts]
 pseudoswapper = "pseudoswapper.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/imauchi-sd/pseudoswapper"
+Repository = "https://github.com/imauchi-sd/pseudoswapper"
+"Bug Tracker" = "https://github.com/imauchi-sd/pseudoswapper/issues"
+Funding = "https://ko-fi.com/imauchisd"
 
 [tool.setuptools.packages.find]
 where = ["src"]

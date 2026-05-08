@@ -1,5 +1,7 @@
 # pseudoswapper
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A local CLI tool for tokenising sensitive data in files before sharing them with AI assistants.
 
 All processing happens on your machine. No sensitive data or token mappings ever leave your device.
@@ -31,11 +33,11 @@ Uses an anchor field (a unique identifier column like `employee_id` or `full_nam
 Requires Python 3.12.
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/imauchi-sd/pseudoswapper
 cd pseudoswapper
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e .
 python -m spacy download en_core_web_lg
 ```
 
@@ -44,6 +46,8 @@ Copy and fill in the example config:
 ```bash
 cp pseudoswapper_config.example.yaml ~/.pseudoswapper_config.yaml
 ```
+
+For platform-specific instructions (Mac, Windows, Linux) and alternative install methods, see the [Installation section in USER_GUIDE.md](USER_GUIDE.md#installation).
 
 ---
 
@@ -141,6 +145,8 @@ Run `pseudoswapper restore` from the same directory where you ran the redact com
 - `~/.pseudoswapper_config.yaml` contains employee names and internal identifiers — treat it as sensitive. Do not commit it to version control.
 - `pseudoswapper` makes no network calls during redact or restore.
 
+See [`PRIVACY.md`](PRIVACY.md) for the full privacy policy and user responsibility disclaimers. To report a security vulnerability, see [`SECURITY.md`](SECURITY.md).
+
 ---
 
 ## Known limitations
@@ -152,6 +158,14 @@ Run `pseudoswapper restore` from the same directory where you ran the redact com
 - `.pdf` is supported natively — output is always a `.redacted.txt` file (layout not preserved). Scanned/image-only PDFs with no embedded text are not supported.
 
 See [`USER_GUIDE.md`](USER_GUIDE.md) for full documentation including anchor field selection, restoration behaviour, and all known limitations.
+
+---
+
+## Support
+
+If this tool saves you time, consider buying me a coffee.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/imauchisd)
 
 ---
 

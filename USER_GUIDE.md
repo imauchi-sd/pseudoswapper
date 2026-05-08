@@ -10,6 +10,7 @@
 6. [Restoring AI output](#6-restoring-ai-output)
 7. [Known limitations](#7-known-limitations)
 8. [Security notes](#8-security-notes)
+9. [Troubleshooting](#9-troubleshooting)
 
 ---
 
@@ -265,19 +266,124 @@ When using an opaque ID as the anchor (e.g. `employee_id = "E001"`), the token `
 
 ## 5. Running the tool
 
-### Prerequisites
+### Installation
+
+`pseudoswapper` requires **Python 3.12**. Follow the path below that matches your setup.
+
+---
+
+#### Mac users — use a virtual environment (recommended)
+
+Macs ship with an older system Python that is used internally by macOS. Replacing or upgrading it to Python 3.12 can break system tools, so it is not recommended. The safe approach is to install Python 3.12 alongside the system Python and run `pseudoswapper` in an isolated virtual environment.
+
+**Step 1 — Install Python 3.12 via Homebrew**
+
+If you do not have [Homebrew](https://brew.sh) installed, open Terminal and run:
 
 ```bash
-# Python 3.12 required
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Then install Python 3.12:
+
+```bash
+brew install python@3.12
+```
+
+Verify the install:
+
+```bash
+python3.12 --version
+# Expected output: Python 3.12.x
+```
+
+**Step 2 — Download the project**
+
+Download or clone the repository into a folder on your machine. In Terminal, navigate to that folder:
+
+```bash
+cd /path/to/pseudoswapper
+```
+
+**Step 3 — Create and activate a virtual environment**
+
+```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
-python -m spacy download en_core_web_lg
-
-# Create config
-cp pseudoswapper_config.example.yaml ~/.pseudoswapper_config.yaml
-# Edit with your company terms and employees
 ```
+
+Your terminal prompt will change to show `(.venv)` — this confirms the environment is active. You need to run `source .venv/bin/activate` again each time you open a new Terminal window.
+
+**Step 4 — Install the tool**
+
+```bash
+pip install -e .
+```
+
+**Step 5 — Download the language model**
+
+```bash
+python -m spacy download en_core_web_lg
+```
+
+This downloads the NLP model used for name detection (~750 MB, one-time only).
+
+---
+
+#### Windows / Linux — system Python or virtual environment
+
+If you already have Python 3.12 installed, you can either install `pseudoswapper` into your system Python or use a virtual environment. A virtual environment is still recommended to keep dependencies isolated, but either works.
+
+**Check your Python version first:**
+
+```bash
+python --version       # or: python3 --version
+```
+
+If the output is not `Python 3.12.x`, download Python 3.12 from [python.org](https://www.python.org/downloads/) and run the installer before continuing.
+
+**Option A — virtual environment (recommended)**
+
+```bash
+# From the project folder:
+python -m venv .venv
+
+# Activate (Linux / macOS):
+source .venv/bin/activate
+
+# Activate (Windows):
+.venv\Scripts\activate
+
+pip install -e .
+python -m spacy download en_core_web_lg
+```
+
+**Option B — system Python (no virtual environment)**
+
+```bash
+pip install .
+python -m spacy download en_core_web_lg
+```
+
+The `pseudoswapper` command will be available globally without needing to activate anything.
+
+---
+
+#### Set up your config file
+
+Copy the example config to your home directory:
+
+```bash
+cp pseudoswapper_config.example.yaml ~/.pseudoswapper_config.yaml
+```
+
+Open it and fill in your company-specific details:
+
+```bash
+pseudoswapper config --edit
+```
+
+See [Section 3](#3-setting-up-the-config-file) for a full walkthrough of every config option.
 
 ### Work directory
 
@@ -560,3 +666,136 @@ The token-to-value mapping exists only in a private temporary directory (`/tmp/.
 ### Terminal session hygiene
 
 If you `echo` a token mapping or print session details in a terminal, that output may be visible in shell history or log files. The tool itself does not print any original values — but be careful with commands you run alongside it.
+
+---
+
+## 9. Troubleshooting
+
+### "command not found: pseudoswapper"
+
+The package has not been installed, or the virtual environment where it was installed is not active.
+
+**If you installed into a virtual environment** (following the README setup steps), activate it first:
+
+```bash
+source .venv/bin/activate
+```
+
+Run this from the project root each time you open a new terminal session before using the tool.
+
+**If you installed into system Python** (`pip install .` without a venv), confirm the install succeeded and that your system Python's bin directory is on your `PATH`:
+
+```bash
+pip show pseudoswapper     # should print package metadata if installed
+python -m pseudoswapper    # alternative way to invoke if PATH is not set up
+```
+
+**If you just downloaded the folder without installing**, run `pip install .` (or `pip install -e .` for an editable install) from the project root first.
+
+---
+
+### "No module named spacy" or "Can't find model 'en_core_web_lg'"
+
+The spaCy model was not downloaded, or the wrong Python environment is active.
+
+```bash
+source .venv/bin/activate
+python -m spacy download en_core_web_lg
+```
+
+The model is downloaded once and reused on every subsequent run. It is a local file — no network call is made when the tool runs.
+
+---
+
+### "No session found" / restore fails immediately
+
+You are running `pseudoswapper restore` from a different directory than the one where you ran the redact command. The `.pseudoswapper_session` pointer file is written to the directory you were in when you ran `document` or `structured`.
+
+```bash
+# Navigate to the directory where you ran the redact command, then retry
+cd ~/Documents/sensitive-files
+pseudoswapper restore ai_output.txt
+```
+
+If you cannot find the original directory, or the session was lost after a reboot, the mapping is gone. Re-run the redact command on the original file to start a new session.
+
+---
+
+### Session was lost after a reboot
+
+The token mapping lives in a system temp directory that does not survive a reboot. This is by design — it limits how long sensitive mappings sit on disk.
+
+Re-run the redact command on the original input file. A new session and a new redacted file will be produced. The tokens in the new output will be identical in structure (e.g. `[PERSON_1]`) but the mapping will be freshly generated, so use the new redacted file with the AI rather than a previously shared one.
+
+---
+
+### The output file looks the same as the input — nothing was redacted
+
+The tool ran but detected no sensitive entities. Common causes:
+
+**Config not loaded or empty** — run `pseudoswapper config --summary` to confirm the tool is reading your config and that `company_terms` and `employees` are populated as expected.
+
+**Employees not listed** — if the file contains names of known people, add them to `employees` in your config. NLP alone may not detect names in non-prose contexts (log lines, table headers, short strings).
+
+**No config file found** — if `~/.pseudoswapper_config.yaml` does not exist, the tool runs with no company-specific definitions. Copy the example template:
+
+```bash
+cp pseudoswapper_config.example.yaml ~/.pseudoswapper_config.yaml
+```
+
+**Structured mode with no anchor** — if no anchor field is configured and auto-detection finds no match, fields are tokenised independently and NLP may miss many values. Set an explicit anchor with `--anchor` or in the config.
+
+---
+
+### Too much was redacted — common words are being replaced
+
+spaCy may interpret common English words as person names (e.g. "Will", "May", "Mark"). Add the affected words to `exclude_terms` in your config:
+
+```yaml
+exclude_terms:
+  - Will
+  - May
+  - Mark
+```
+
+Run `pseudoswapper config --summary` to confirm the terms are registered, then re-run the redact command.
+
+---
+
+### Some tokens were not restored in the AI output
+
+The AI reformatted a token in a way the restore logic did not catch. Common cases that restore handles automatically: case changes (`[person_1]`, `[Person_1]`), markdown wrapping (`` `[PERSON_1]` ``, `**[PERSON_1]**`).
+
+Cases that will not restore automatically: the AI expanded the token into prose (e.g. wrote "Person 1" instead of `[PERSON_1]`), or split/merged a token across lines.
+
+Scan the restored output for any remaining `[TOKEN]` patterns — those are occurrences the AI altered beyond what fuzzy matching can recover. Replace them manually by cross-referencing the original file.
+
+---
+
+### "Error: unsupported file" or PDF produces an error
+
+**Scanned / image-only PDF** — if the PDF has no embedded text (e.g. it is a scanned document saved as an image), `pseudoswapper` cannot extract text and will exit with an error. Convert the PDF to searchable text first:
+
+```bash
+# macOS: use Automator's "Create PDF" with OCR, or a third-party OCR tool
+# Linux: ocrmypdf report-scanned.pdf report-searchable.pdf
+```
+
+**Unsupported extension** — only `.txt`, `.log`, `.docx`, `.pdf`, `.csv`, `.json`, and `.xlsx` are supported. For other formats, export or convert to `.txt` first.
+
+---
+
+### YAML parse error when running any command
+
+Your config file contains a syntax error. Open it:
+
+```bash
+pseudoswapper config --edit
+```
+
+Common YAML mistakes:
+- Indentation with tabs instead of spaces
+- A string containing a colon not wrapped in quotes (e.g. `- Project: Alpha` should be `- "Project: Alpha"`)
+- Missing `-` before list items under `employees` or `company_terms`
+
+If you are unsure, validate it against the example template in `pseudoswapper_config.example.yaml`.
