@@ -189,4 +189,4 @@ python -m pytest          # 152 tests, all passing
 
 **Python interpreter:** the project requires the `.venv` at the project root (Python 3.12). Always activate it before running any `python` or `pytest` commands.
 
-Project layout and phase-by-phase build plan: [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines and the data safety checklist that applies to all commits.

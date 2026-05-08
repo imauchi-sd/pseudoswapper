@@ -1,6 +1,14 @@
 # Session pointer — never commit
 .pseudoswapper_session
 
+# Tool output — redacted and restored files must never be committed
+*.redacted.*
+*.restored.*
+
+# Local config — may contain real employee names and company identifiers
+pseudoswapper_config.yaml
+pseudoswapper_config.local.yaml
+
 # Python
 __pycache__/
 *.py[cod]
@@ -21,9 +29,6 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
-
-# User config — contains sensitive data, never commit
-~/.pseudoswapper_config.yaml
 
 # macOS
 .DS_Store
