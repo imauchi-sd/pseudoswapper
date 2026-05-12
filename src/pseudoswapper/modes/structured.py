@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -104,15 +105,19 @@ def _process_rows(
     registry: EntityRegistry,
     detector: Detector,
     force_fields: list[str] | None = None,
+    on_row: Callable[[int, int], None] | None = None,
 ) -> list[dict]:
     correlated: set[str] = set(
         (config.get("structured") or {}).get("correlated_fields", [])
     )
     forced: set[str] = set(force_fields or [])
+    total = len(rows)
 
     result_rows: list[dict] = []
 
-    for row in rows:
+    for i, row in enumerate(rows):
+        if on_row:
+            on_row(i, total)
         out = dict(row)
 
         # ── No anchor field resolved ─────────────────────────────────────
@@ -245,6 +250,7 @@ def redact_structured(
     cli_anchor: str | None = None,
     force_fields: list[str] | None = None,
     passthrough_types: set[str] | None = None,
+    on_row: Callable[[int, int], None] | None = None,
 ) -> Path:
     """Run structured mode: read → anchor resolution → row processing → write → save session."""
     from pseudoswapper.modes.document import _pre_register_employees
@@ -260,7 +266,7 @@ def redact_structured(
     config_force_fields: list[str] = (config.get("structured") or {}).get("force_fields", [])
     resolved_force_fields = force_fields if force_fields is not None else config_force_fields
 
-    processed = _process_rows(rows, anchor_field, config, tokenizer, registry, detector, resolved_force_fields)
+    processed = _process_rows(rows, anchor_field, config, tokenizer, registry, detector, resolved_force_fields, on_row=on_row)
 
     out = _output_path(file)
     _write_file(processed, columns, out)

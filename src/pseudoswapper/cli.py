@@ -4,6 +4,14 @@ from pathlib import Path
 from typing import List, Optional
 
 import typer
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 from pseudoswapper.config import DEFAULT_CONFIG_PATH, ConfigError, load_config
 
@@ -272,7 +280,14 @@ def document(
 
     from pseudoswapper.modes.document import redact_document
     try:
-        out = redact_document(file, config, Path.cwd(), passthrough_types=passthrough_types)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("{task.description}"),
+            TimeElapsedColumn(),
+            transient=True,
+        ) as progress:
+            progress.add_task(f"Redacting {file.name}…", total=None)
+            out = redact_document(file, config, Path.cwd(), passthrough_types=passthrough_types)
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
@@ -316,12 +331,28 @@ def structured(
 
     from pseudoswapper.modes.structured import redact_structured
     try:
-        out = redact_structured(
-            file, config, Path.cwd(),
-            cli_anchor=anchor,
-            force_fields=resolved_force_fields,
-            passthrough_types=passthrough_types,
-        )
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            transient=True,
+        ) as progress:
+            task = progress.add_task(f"Processing {file.name}", total=None)
+
+            def _on_row(i: int, total: int) -> None:
+                if i == 0:
+                    progress.update(task, total=total)
+                progress.advance(task)
+
+            out = redact_structured(
+                file, config, Path.cwd(),
+                cli_anchor=anchor,
+                force_fields=resolved_force_fields,
+                passthrough_types=passthrough_types,
+                on_row=_on_row,
+            )
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
