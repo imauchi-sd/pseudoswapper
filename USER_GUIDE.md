@@ -462,6 +462,20 @@ pseudoswapper structured access_logs.csv --anchor user_id --passthrough IP --pas
 
 Output follows the same naming convention: `employees.csv` → `employees.redacted.csv`.
 
+#### CSV files with metadata headers
+
+Some tools export CSVs with a block of report metadata above the real column headers — for example:
+
+```
+Administrator,davidau@example.com
+Report Created,"May 15, 2026 2:19:08 PM UTC"
+Users,"Include - [davidau@example.com]"
+No.,Event Time,User,URL,...   ← real header row
+1,...
+```
+
+`pseudoswapper structured` detects these automatically. It scans the first 20 rows, identifies the row with the most fields as the real header, and skips everything above it. No configuration is needed. The interactive column-selection menu also uses the detected header, so you always see the actual column names.
+
 #### Force-tokenizing specific columns
 
 When you run `pseudoswapper structured`, the tool reads the file's column headers and prompts you to select any columns that should be force-tokenized:

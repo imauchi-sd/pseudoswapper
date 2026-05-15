@@ -208,11 +208,26 @@ def _output_path(input_path: Path) -> Path:
     return input_path.parent / f"{input_path.stem}.redacted{input_path.suffix}"
 
 
+def _detect_csv_skiprows(file: Path) -> int:
+    """Return the number of leading metadata rows before the real header row."""
+    import csv
+    with file.open(encoding="utf-8-sig") as f:
+        rows = [row for _, row in zip(range(20), csv.reader(f))]
+    if not rows:
+        return 0
+    max_fields = max(len(r) for r in rows)
+    for i, row in enumerate(rows):
+        if len(row) == max_fields:
+            return i
+    return 0
+
+
 def _read_file(file: Path) -> tuple[list[dict], list[str]]:
     suffix = file.suffix.lower()
     if suffix == ".csv":
         import pandas as pd
-        df = pd.read_csv(file, dtype=str, keep_default_na=False)
+        skiprows = _detect_csv_skiprows(file)
+        df = pd.read_csv(file, dtype=str, keep_default_na=False, skiprows=skiprows, encoding="utf-8-sig")
         return df.to_dict("records"), list(df.columns)
     elif suffix == ".json":
         data = json.loads(file.read_text(encoding="utf-8"))

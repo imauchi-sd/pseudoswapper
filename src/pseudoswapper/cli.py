@@ -197,7 +197,9 @@ def _read_columns(file: Path) -> list[str]:
     try:
         if suffix == ".csv":
             import pandas as pd
-            return list(pd.read_csv(file, nrows=0, dtype=str).columns)
+            from pseudoswapper.modes.structured import _detect_csv_skiprows
+            skiprows = _detect_csv_skiprows(file)
+            return list(pd.read_csv(file, nrows=0, skiprows=skiprows, dtype=str, encoding="utf-8-sig").columns)
         if suffix == ".json":
             import json
             data = json.loads(file.read_text(encoding="utf-8"))
