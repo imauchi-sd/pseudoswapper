@@ -4,7 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from pseudoswapper.cli import app
-from pseudoswapper.config import ConfigError, _require, default_config, load_config
+from pseudoswapper.config import ConfigError, _require, default_config, get_mode, load_config, set_mode
 
 
 # --- load_config ---
@@ -218,3 +218,111 @@ def test_summary_shows_structured_settings():
 def test_summary_shows_auto_detect_when_no_anchor():
     out = _invoke_summary(default_config())
     assert "(auto-detect)" in out
+
+
+def test_summary_shows_active_mode():
+    out = _invoke_summary(default_config())
+    assert "Active mode:" in out
+
+
+def test_summary_shows_masking_rules_when_configured():
+    cfg = default_config()
+    cfg["masking_rules"] = {
+        "PERSON": {"keep": "initials"},
+        "CREDIT_CARD": {"keep_first": 6, "keep_last": 4, "fill_char": "X"},
+    }
+    out = _invoke_summary(cfg)
+    assert "MASKING RULES  (2 configured)" in out
+    assert "initials + sequence number" in out
+    assert "first 6 + last 4 digits" in out
+
+
+def test_summary_shows_no_masking_rules_when_empty():
+    out = _invoke_summary(default_config())
+    assert "MASKING RULES  (0 configured)" in out
+    assert "none" in out
+
+
+# --- get_mode / set_mode ---
+
+def test_get_mode_defaults_to_tokenize(tmp_path):
+    with mock.patch("pseudoswapper.config.PREFS_PATH", tmp_path / "prefs.yaml"):
+        assert get_mode() == "tokenize"
+
+
+def test_set_mode_mask_persists(tmp_path):
+    with mock.patch("pseudoswapper.config.PREFS_PATH", tmp_path / "prefs.yaml"):
+        set_mode("mask")
+        assert get_mode() == "mask"
+
+
+def test_set_mode_tokenize_reverts(tmp_path):
+    with mock.patch("pseudoswapper.config.PREFS_PATH", tmp_path / "prefs.yaml"):
+        set_mode("mask")
+        set_mode("tokenize")
+        assert get_mode() == "tokenize"
+
+
+def test_set_mode_invalid_raises(tmp_path):
+    with mock.patch("pseudoswapper.config.PREFS_PATH", tmp_path / "prefs.yaml"):
+        with pytest.raises(ConfigError, match="Invalid mode"):
+            set_mode("redact")
+
+
+def test_set_mode_does_not_clobber_work_dir(tmp_path):
+    prefs_path = tmp_path / "prefs.yaml"
+    with mock.patch("pseudoswapper.config.PREFS_PATH", prefs_path):
+        from pseudoswapper.config import set_work_dir, get_work_dir
+        set_work_dir(tmp_path)
+        set_mode("mask")
+        assert get_work_dir() == tmp_path.resolve()
+        assert get_mode() == "mask"
+
+
+# --- mode CLI command ---
+
+def _prefs_patch(tmp_path):
+    return mock.patch("pseudoswapper.config.PREFS_PATH", tmp_path / "prefs.yaml")
+
+
+def test_mode_cmd_no_args_shows_current(tmp_path):
+    runner = CliRunner()
+    with _prefs_patch(tmp_path):
+        result = runner.invoke(app, ["mode"])
+    assert result.exit_code == 0
+    assert "tokenize" in result.output
+
+
+def test_mode_cmd_show_flag(tmp_path):
+    runner = CliRunner()
+    with _prefs_patch(tmp_path):
+        result = runner.invoke(app, ["mode", "--show"])
+    assert result.exit_code == 0
+    assert "tokenize" in result.output
+
+
+def test_mode_cmd_set_mask(tmp_path):
+    runner = CliRunner()
+    with _prefs_patch(tmp_path):
+        result = runner.invoke(app, ["mode", "mask"])
+        assert result.exit_code == 0
+        assert "mask" in result.output
+        assert get_mode() == "mask"
+
+
+def test_mode_cmd_set_tokenize(tmp_path):
+    runner = CliRunner()
+    with _prefs_patch(tmp_path):
+        set_mode("mask")
+        result = runner.invoke(app, ["mode", "tokenize"])
+        assert result.exit_code == 0
+        assert "tokenize" in result.output
+        assert get_mode() == "tokenize"
+
+
+def test_mode_cmd_invalid_value_exits_nonzero(tmp_path):
+    runner = CliRunner()
+    with _prefs_patch(tmp_path):
+        result = runner.invoke(app, ["mode", "redact"])
+    assert result.exit_code != 0
+    assert "Invalid mode" in result.output

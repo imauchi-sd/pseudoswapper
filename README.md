@@ -10,7 +10,7 @@ All processing happens on your machine. No sensitive data or token mappings ever
 
 ## What it does
 
-Before you share a document or data file with an AI assistant — or any untrusted or public tool — `pseudoswapper` scans it and replaces sensitive values — names, email addresses, phone numbers, domains, company identifiers — with human-readable tokens like `[PERSON_1]`, `[EMAIL_2]`, `[COMPANY_1]`. You share the tokenised file. When the AI returns its output, you run `pseudoswapper restore` and the original values are substituted back in.
+Before you share a document or data file with an AI assistant — or any untrusted or public tool — `pseudoswapper` scans it and replaces sensitive values — names, email addresses, phone numbers, domains, company identifiers — with human-readable tokens like `[PERSON_1]`, `[EMAIL_2]`, `[COMPANY_1]`. You share the tokenised file. When the AI returns its output, you run `pseudoswapper restore` and the original values are substituted back in. An optional mask mode permanently redacts values where recovery is not needed — for example, showing only the first 6 and last 4 digits of a payment card number, or replacing person names with initials + a sequence number (e.g. `5_J.D.`).
 
 The token-to-value mapping is held in a temporary, user-only directory for the duration of the session and deleted automatically after a successful restore. Nothing is written to a persistent file.
 
@@ -92,6 +92,16 @@ pseudoswapper structured access_logs.csv --anchor user_id --passthrough IP --pas
 pseudoswapper document report.txt --employees-csv ~/company_employees.csv
 pseudoswapper structured access_logs.csv --anchor user_id --employees-csv ~/company_employees.csv
 
+# Switch permanently between reversible tokenisation and permanent masking (saved in prefs)
+pseudoswapper mode mask
+pseudoswapper mode tokenize
+pseudoswapper mode            # → shows current setting
+
+# Or override mode for a single run without changing the saved preference
+pseudoswapper document report.txt --mask
+pseudoswapper structured employees.csv --mask
+pseudoswapper document report.txt --no-mask   # force tokenize even if mode=mask
+
 # After the AI returns its output, restore original values
 pseudoswapper restore ai_output.txt
 pseudoswapper restore             # → prompts file selection from work directory
@@ -123,6 +133,7 @@ pseudoswapper clear-session
 - **`employees_csv`** — path to a CSV file of employees (use instead of or alongside `employees` for large rosters); must have a `full_name` column, optionally `email` and `username`
 - **`exclude_terms`** — words to exclude from NLP detection (prevents over-redaction of common names)
 - **`passthrough_types`** — entity types to leave unreplaced (e.g. `IP`, `DOMAIN`, `URL`, `PHONE`, `LOC`); useful when certain technical values carry analytical value. Protected types (`PERSON`, `EMAIL`, `COMPANY`, `ORG`) cannot be bypassed. Also overridable per-run via `--passthrough` on the CLI.
+- **`masking_rules`** — entity types to permanently redact rather than tokenise. Masked values are not restorable. Supported types: `PERSON` (replaces names with initials + sequence, e.g. `5_J.D.`) and `CREDIT_CARD` (retains first/last digits, e.g. `411111XXXXXX1111`). `CREDIT_CARD` is a new protected type added alongside `PERSON`, `EMAIL`, `COMPANY`, and `ORG` — it cannot be bypassed via `passthrough_types`.
 - **`structured.anchor_field`** — default anchor column for structured mode
 - **`structured.correlated_fields`** — columns to correlate to the anchor entity per row
 - **`structured.force_fields`** — columns to always tokenize unconditionally, bypassing NLP (useful for name columns with non-Western names or non-standard formatting)
@@ -131,7 +142,7 @@ You can also pass a CSV per-invocation with `--employees-csv` on any redact comm
 
 See `pseudoswapper_config.example.yaml` for a fully annotated template, and `employees_sample.csv` for the expected CSV format.
 
-**Work directory preference** (`~/.pseudoswapper_prefs.yaml`) — set via `pseudoswapper workdir --set PATH`. This file is written by the tool and is separate from your config file, so editing one never affects the other.
+**Work directory and mode preferences** (`~/.pseudoswapper_prefs.yaml`) — set via `pseudoswapper workdir --set PATH` and `pseudoswapper mode [tokenize|mask]`. This file is written by the tool and is separate from your config file.
 
 ---
 
@@ -184,7 +195,7 @@ If this tool saves you time, consider buying me a coffee.
 ```bash
 source .venv/bin/activate
 pip install -e ".[dev]"
-python -m pytest          # 152 tests, all passing
+python -m pytest          # 158 tests, all passing
 ```
 
 **Python interpreter:** the project requires the `.venv` at the project root (Python 3.12). Always activate it before running any `python` or `pytest` commands.

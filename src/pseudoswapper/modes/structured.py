@@ -55,8 +55,15 @@ def _resolve_anchor(
 
 
 def _person_n(token: str) -> int | None:
+    # Token format: [PERSON_5] or [PERSON_5_FIRST]
     m = re.search(r"\[PERSON_(\d+)", token, re.IGNORECASE)
-    return int(m.group(1)) if m else None
+    if m:
+        return int(m.group(1))
+    # Mask format: 5_J.D.
+    m = re.match(r"^(\d+)_", token)
+    if m:
+        return int(m.group(1))
+    return None
 
 
 def _cell_str(value: Any) -> str:
@@ -266,12 +273,13 @@ def redact_structured(
     force_fields: list[str] | None = None,
     passthrough_types: set[str] | None = None,
     on_row: Callable[[int, int], None] | None = None,
+    masking_rules: dict | None = None,
 ) -> Path:
     """Run structured mode: read → anchor resolution → row processing → write → save session."""
     from pseudoswapper.modes.document import _pre_register_employees
 
     registry = EntityRegistry()
-    tokenizer = Tokenizer(registry, passthrough_types=passthrough_types)
+    tokenizer = Tokenizer(registry, passthrough_types=passthrough_types, masking_rules=masking_rules or {})
     detector = Detector(config)
     _pre_register_employees(config, tokenizer)
 

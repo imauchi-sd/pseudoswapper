@@ -144,7 +144,7 @@ share it.
 
 **Decision:** Users can opt out of tokenising certain entity types (`IP`, `DOMAIN`, `URL`, `PHONE`,
 `LOC`) via `passthrough_types` in config or `--passthrough` on the CLI. A hardcoded set of
-protected types (`PERSON`, `EMAIL`, `COMPANY`, `ORG`) is always tokenised and cannot be bypassed
+protected types (`PERSON`, `EMAIL`, `COMPANY`, `ORG`, `CREDIT_CARD`) is always tokenised or masked and cannot be bypassed
 by any config or flag.
 
 **Rationale:** Not all detectable values are equally sensitive. IP addresses in a security incident
@@ -153,7 +153,7 @@ useful information without adding privacy protection, since IPs of internal syst
 personally identifying in most contexts. At the same time, allowing users to bypass names or emails
 would undermine the tool's core privacy guarantee, so those types are hardcoded as non-bypassable.
 
-**Implementation:** `PROTECTED_TYPES` is a `frozenset` in `tokenizer.py`. When a `Tokenizer` is
+**Implementation:** `PROTECTED_TYPES` is a `frozenset` in `tokenizer.py` containing `PERSON`, `EMAIL`, `COMPANY`, `ORG`, and `CREDIT_CARD`. When a `Tokenizer` is
 constructed with a `passthrough_types` set, any protected type listed there is silently dropped.
 `Tokenizer.assign()` skips entities whose type is in the effective passthrough set. Force-tokenized
 fields (structured mode's `force_fields`) always tokenize unconditionally — they are unaffected by
@@ -162,6 +162,33 @@ passthrough, since the user explicitly opted in to tokenising that column.
 **Merge semantics:** CLI `--passthrough` flags are unioned with the YAML `passthrough_types` list.
 Neither overrides the other. The final set is computed in `cli._resolve_passthrough()` and passed
 down to the mode orchestrators.
+
+---
+
+### Decision 8: Masking as a permanent alternative to reversible tokenisation
+
+**Decision:** Introduce a `masking_rules` config block and a `mode` preference that allow specific entity types to be permanently redacted rather than replaced with reversible tokens.
+
+**Rationale:** Some use cases don't require full restoration. A user sharing payment card data to ask the AI to identify the card brand needs the first 6 digits (the IIN/BIN) — but not the full PAN stored anywhere. A user producing a report for a compliance audit may prefer to share initials rather than full names, knowing they will never ask the AI's output to be reinstated to the original. For these cases, permanent redaction is simpler and safer than the tokenise → share → restore cycle.
+
+**Why not just "don't restore"?** A user could already achieve non-restoration by simply not running `pseudoswapper restore`. But tokenised output still contains structured, decodable tokens (`[PERSON_1]`) that invite accidental or deliberate reversal. Masked output (`5_J.D.`, `411111XXXXXX1111`) has no decoding path because the mapping was never stored.
+
+**Person name masking format (`{n}_{initials}`):**
+The format is designed to satisfy three constraints simultaneously:
+1. **Uniqueness:** Two people with the same initials (e.g. Jane Doe and John Doe) are distinguished by their sequence number (`1_J.D.` vs `2_J.D.`).
+2. **NER safety:** The format `5_J.D.` is not recognised as a human name by spaCy, so multi-pass documents do not produce cascading re-detections.
+3. **Traceability:** A reader can tell that all occurrences of `5_J.D.` refer to the same person without knowing who that person is.
+
+The sequence number `n` is drawn from the same `EntityRegistry` counter used for tokens, so masks and tokens within the same session never share a counter value.
+
+**PAN masking format (first N + last N digits):**
+Follows PCI-DSS guidance for truncated PANs. The default is keep_first=6, keep_last=4 — retaining the IIN/BIN (brand/issuer identification) and the last 4 (common for user-facing display). Non-digit characters (spaces, dashes) are stripped before masking; the output is a clean digit string.
+
+**Separation of definition from activation:**
+The `masking_rules` config block defines *how* to mask (format, digit counts, fill character). Whether masking is active is controlled separately by the `mode` preference or the `--mask`/`--no-mask` per-run flag. This allows users to define masking rules once in config and toggle them on/off without editing the config file.
+
+**Non-restorability is enforced at the registry level:**
+Masked values are stored in `EntityRegistry._forward` (so repeated occurrences of the same value produce the same mask) but NOT in `EntityRegistry._reverse` (so `pseudoswapper restore` cannot reverse them). The restore logic searches for `[TOKEN]` patterns — masked values (`5_J.D.`, `411111XXXXXX1111`) do not match that pattern and are left untouched even if restore is run.
 
 ---
 
@@ -203,6 +230,7 @@ This is the authoritative list of known limitations to carry into USER_GUIDE.md.
 | L8 | PDF output is always plain text; scanned/image PDFs unsupported | Layout and formatting lost; image-only PDFs raise UnsupportedFileError | Documented limitation; scanned PDFs require OCR pre-processing |
 | L9 | Opaque ID anchors restore to the ID, not the person name | `[PERSON_1]` → `"E001"` rather than `"John Doe"` in restored AI output | Use `full_name` as anchor when human-readable restoration is required |
 | L10 | `passthrough_types` intentionally leaves selected entity types unreplaced | The AI assistant receives original values for bypassed types | Protected types (PERSON, EMAIL, COMPANY, ORG) cannot be bypassed; user is responsible for assessing sensitivity of bypassed types |
+| L11 | Masked values cannot be restored | `pseudoswapper restore` leaves masked values (`5_J.D.`, `411111XXXXXX1111`) as-is — they are not in the session's reverse map | Design intent; use tokenize mode when full restoration is required |
 
 ---
 

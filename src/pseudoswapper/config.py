@@ -88,6 +88,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH, employees_csv: Path | None = N
     data.setdefault("employees", [])
     data.setdefault("exclude_terms", [])
     data.setdefault("passthrough_types", [])
+    data.setdefault("masking_rules", {})
     data.setdefault("structured", {})
     data["structured"].setdefault("anchor_field", None)
     data["structured"].setdefault("correlated_fields", [])
@@ -116,6 +117,7 @@ def default_config() -> dict:
         "employees": [],
         "exclude_terms": [],
         "passthrough_types": [],
+        "masking_rules": {},
         "structured": {
             "anchor_field": None,
             "correlated_fields": [],
@@ -149,4 +151,17 @@ def set_work_dir(path: Path) -> None:
 def clear_work_dir() -> None:
     prefs = _load_prefs()
     prefs.pop("work_dir", None)
+    _save_prefs(prefs)
+
+
+def get_mode() -> str:
+    """Return the active mode preference: 'tokenize' (default) or 'mask'."""
+    return _load_prefs().get("mode", "tokenize")
+
+
+def set_mode(mode: str) -> None:
+    if mode not in ("tokenize", "mask"):
+        raise ConfigError(f"Invalid mode: {mode!r}. Must be 'tokenize' or 'mask'.")
+    prefs = _load_prefs()
+    prefs["mode"] = mode
     _save_prefs(prefs)

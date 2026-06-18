@@ -35,6 +35,16 @@ class EntityRegistry:
         # Reverse map keeps the first mapping only (canonical → token is already set).
         self._reverse.setdefault(token, alias)
 
+    def allocate_counter(self, entity_type: str) -> int:
+        """Increment and return the counter for entity_type without creating a token."""
+        self._counters[entity_type] += 1
+        return self._counters[entity_type]
+
+    def register_mask(self, value: str, masked_form: str) -> str:
+        """Store value → masked_form in the forward map only (masked values are not restorable)."""
+        self._forward[value] = masked_form
+        return masked_form
+
     def to_dict(self) -> dict:
         return {
             "forward": dict(self._forward),

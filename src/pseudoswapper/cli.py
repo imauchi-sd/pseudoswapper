@@ -13,7 +13,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
-from pseudoswapper.config import DEFAULT_CONFIG_PATH, ConfigError, load_config
+from pseudoswapper.config import DEFAULT_CONFIG_PATH, ConfigError, get_mode, load_config
 
 app = typer.Typer(
     name="pseudoswapper",
@@ -24,10 +24,11 @@ app = typer.Typer(
 _STRUCTURED_EXTENSIONS = {".csv", ".json", ".xlsx"}
 
 _PROTECTED_TYPE_DESCRIPTIONS: dict[str, str] = {
-    "PERSON":  "person names — NLP + pre-registered employees",
-    "EMAIL":   "email addresses",
-    "COMPANY": "YAML company_terms + NLP organisation matches",
-    "ORG":     "organisation names (NLP)",
+    "PERSON":      "person names — NLP + pre-registered employees",
+    "EMAIL":       "email addresses",
+    "COMPANY":     "YAML company_terms + NLP organisation matches",
+    "ORG":         "organisation names (NLP)",
+    "CREDIT_CARD": "payment card numbers (PAN)",
 }
 
 _BYPASSABLE_TYPE_DESCRIPTIONS: dict[str, str] = {
@@ -52,9 +53,14 @@ def _print_config_summary(config: dict) -> None:
         {t.upper() for t in config.get("passthrough_types", [])} - PROTECTED_TYPES
     )
 
+    current_mode = get_mode()
+    mode_label = "mask (permanent redaction)" if current_mode == "mask" else "tokenize (reversible)"
+
     typer.echo("")
     typer.echo("pseudoswapper — detection summary")
     _rule("═")
+    typer.echo(f"Active mode:  {mode_label}  (change with 'pseudoswapper mode')")
+    _rule()
 
     # ── Entity types ──────────────────────────────────────────────────────────
     typer.echo("ENTITY TYPES\n")
@@ -106,6 +112,25 @@ def _print_config_summary(config: dict) -> None:
     exclude = config.get("exclude_terms", [])
     typer.echo(f"EXCLUDED FROM NLP  ({len(exclude)} terms)")
     typer.echo(f"  {', '.join(str(t) for t in exclude)}" if exclude else "  (none)")
+
+    # ── Masking rules ─────────────────────────────────────────────────────────
+    typer.echo("")
+    _rule()
+    masking_rules = config.get("masking_rules", {})
+    typer.echo(f"MASKING RULES  ({len(masking_rules)} configured)")
+    if masking_rules:
+        for mtype, rule in masking_rules.items():
+            if mtype == "PERSON":
+                typer.echo(f"  {f'[{mtype}]':<16}initials + sequence number  (e.g. 5_J.D.)")
+            elif mtype == "CREDIT_CARD":
+                kf = (rule or {}).get("keep_first", 6)
+                kl = (rule or {}).get("keep_last", 4)
+                fc = (rule or {}).get("fill_char", "X")
+                typer.echo(f"  {f'[{mtype}]':<16}first {kf} + last {kl} digits, fill='{fc}'")
+            else:
+                typer.echo(f"  {f'[{mtype}]':<16}{rule}")
+    else:
+        typer.echo("  (none — all protected types are tokenized)")
 
     # ── Structured mode ───────────────────────────────────────────────────────
     typer.echo("")
@@ -253,6 +278,19 @@ def _resolve_passthrough(config: dict, cli_flags: Optional[List[str]]) -> set[st
     return combined - PROTECTED_TYPES
 
 
+def _resolve_masking_rules(config: dict, cli_mask: Optional[bool]) -> dict:
+    """Return the masking_rules to apply: CLI flag > saved mode pref > default (tokenize).
+
+    When active, masking_rules come from config. When inactive, an empty dict is returned
+    so the Tokenizer falls back to pure tokenization.
+    """
+    if cli_mask is True:
+        return config.get("masking_rules") or {}
+    if cli_mask is False:
+        return {}
+    return config.get("masking_rules") or {} if get_mode() == "mask" else {}
+
+
 @app.command()
 def document(
     file: Optional[Path] = typer.Argument(None, help="Prose file to redact"),
@@ -268,6 +306,14 @@ def document(
             "Protected types (PERSON, EMAIL, COMPANY, ORG) are always tokenized."
         ),
     ),
+    mask: Optional[bool] = typer.Option(
+        None, "--mask/--no-mask",
+        help=(
+            "Apply masking rules from config (permanent redaction). "
+            "Overrides the saved mode preference. "
+            "Use 'pseudoswapper mode' to set a persistent default."
+        ),
+    ),
 ) -> None:
     """Redact sensitive data from a prose document (txt, email, report)."""
     file = _require_file(file, "document")
@@ -279,6 +325,7 @@ def document(
         raise typer.Exit(1)
 
     passthrough_types = _resolve_passthrough(config, passthrough)
+    masking_rules = _resolve_masking_rules(config, mask)
 
     from pseudoswapper.modes.document import redact_document
     try:
@@ -289,7 +336,11 @@ def document(
             transient=True,
         ) as progress:
             progress.add_task(f"Redacting {file.name}…", total=None)
-            out = redact_document(file, config, Path.cwd(), passthrough_types=passthrough_types)
+            out = redact_document(
+                file, config, Path.cwd(),
+                passthrough_types=passthrough_types,
+                masking_rules=masking_rules,
+            )
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
@@ -317,6 +368,14 @@ def structured(
             "Protected types (PERSON, EMAIL, COMPANY, ORG) are always tokenized."
         ),
     ),
+    mask: Optional[bool] = typer.Option(
+        None, "--mask/--no-mask",
+        help=(
+            "Apply masking rules from config (permanent redaction). "
+            "Overrides the saved mode preference. "
+            "Use 'pseudoswapper mode' to set a persistent default."
+        ),
+    ),
 ) -> None:
     """Redact sensitive data from a structured file (CSV, JSON, XLSX)."""
     file = _require_file(file, "structured")
@@ -330,6 +389,7 @@ def structured(
         raise typer.Exit(1)
 
     passthrough_types = _resolve_passthrough(config, passthrough)
+    masking_rules = _resolve_masking_rules(config, mask)
 
     from pseudoswapper.modes.structured import redact_structured
     try:
@@ -354,6 +414,7 @@ def structured(
                 force_fields=resolved_force_fields,
                 passthrough_types=passthrough_types,
                 on_row=_on_row,
+                masking_rules=masking_rules,
             )
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
@@ -414,6 +475,51 @@ def clear_session_cmd() -> None:
     from pseudoswapper.session import clear_session
     clear_session(Path.cwd())
     typer.echo("Session cleared.")
+
+
+@app.command(name="mode")
+def mode_cmd(
+    mode_value: Optional[str] = typer.Argument(
+        None,
+        help="'tokenize' — reversible tokens (default).  'mask' — permanent redaction using masking_rules from config.",
+    ),
+    show: bool = typer.Option(False, "--show", help="Show the current mode preference."),
+) -> None:
+    """Switch between tokenize and mask mode, or view the current setting.
+
+    Tokenize mode (default): detected entities are replaced with reversible tokens
+    like [PERSON_1] that can be restored after AI processing.
+
+    Mask mode: entities with masking_rules in config are permanently redacted
+    (e.g. names → '5_J.D.', card numbers → '411111XXXXXX1111').
+    Other entity types still fall back to tokenization.
+
+    The --mask / --no-mask flag on 'document' and 'structured' overrides this
+    setting for a single run without changing the saved preference.
+    """
+    from pseudoswapper.config import ConfigError, set_mode
+
+    if mode_value is None:
+        current = get_mode()
+        typer.echo(f"Mode: {current}")
+        if not show:
+            typer.echo("Use 'pseudoswapper mode tokenize' or 'pseudoswapper mode mask' to switch.")
+        return
+
+    if mode_value not in ("tokenize", "mask"):
+        typer.echo(
+            f"Error: Invalid mode '{mode_value}'. Must be 'tokenize' or 'mask'.", err=True
+        )
+        raise typer.Exit(1)
+
+    try:
+        set_mode(mode_value)
+    except ConfigError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    label = "reversible tokenization" if mode_value == "tokenize" else "permanent redaction (masking)"
+    typer.echo(f"Mode set to: {mode_value}  ({label})")
 
 
 @app.command(name="config")

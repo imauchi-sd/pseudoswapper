@@ -90,3 +90,49 @@ def test_from_dict_preserves_counters():
     # Next register should increment from 3
     token = reg2.register("C", "PERSON")
     assert token == "[PERSON_3]"
+
+
+# ── allocate_counter / register_mask ─────────────────────────────────────────
+
+def test_allocate_counter_increments_sequentially():
+    reg = EntityRegistry()
+    assert reg.allocate_counter("PERSON") == 1
+    assert reg.allocate_counter("PERSON") == 2
+
+
+def test_allocate_counter_independent_per_type():
+    reg = EntityRegistry()
+    reg.allocate_counter("PERSON")
+    assert reg.allocate_counter("EMAIL") == 1
+
+
+def test_allocate_counter_does_not_create_token_entries():
+    reg = EntityRegistry()
+    reg.allocate_counter("PERSON")
+    # Nothing in forward or reverse maps
+    assert not any("[PERSON_" in k for k in reg._forward)
+    assert not any("[PERSON_" in k for k in reg._reverse)
+
+
+def test_allocate_counter_shares_sequence_with_register():
+    reg = EntityRegistry()
+    reg.register("Alice", "PERSON")       # counter → 1, token = [PERSON_1]
+    n = reg.allocate_counter("PERSON")    # counter → 2
+    assert n == 2
+    token = reg.register("Bob", "PERSON") # counter → 3, token = [PERSON_3]
+    assert token == "[PERSON_3]"
+
+
+def test_register_mask_stores_forward_only():
+    reg = EntityRegistry()
+    result = reg.register_mask("John Doe", "1_J.D.")
+    assert result == "1_J.D."
+    assert reg.lookup("John Doe") == "1_J.D."
+    assert reg.reverse_lookup("1_J.D.") is None
+
+
+def test_register_mask_deduplication():
+    reg = EntityRegistry()
+    reg.register_mask("John Doe", "1_J.D.")
+    reg.register_mask("John Doe", "99_X.X.")  # second call overwrites forward
+    assert reg.lookup("John Doe") == "99_X.X."

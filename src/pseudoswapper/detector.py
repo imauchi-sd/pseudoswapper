@@ -17,6 +17,7 @@ _SUPPORTED_ENTITIES = [
     "ORGANIZATION",
     "LOCATION",
     "COMPANY",
+    "CREDIT_CARD",
 ]
 
 # Map Presidio entity type names to our internal token-type names.
@@ -30,6 +31,7 @@ _ENTITY_TYPE_MAP: dict[str, str] = {
     "ORGANIZATION": "ORG",
     "LOCATION": "LOC",
     "COMPANY": "COMPANY",
+    "CREDIT_CARD": "CREDIT_CARD",
 }
 
 

@@ -85,6 +85,29 @@ Is your file a CSV, spreadsheet (.xlsx), or JSON array?
   → NO:  use pseudoswapper document   (supports .txt, .log, .docx, .pdf, and other text formats)
 ```
 
+### Tokenize vs mask
+
+Both Document and Structured mode can run in one of two redaction styles:
+
+**Tokenize (default)** — detected entities become reversible tokens like `[PERSON_1]`. After the AI returns its output, run `pseudoswapper restore` to swap tokens back to the original values. Use this when you need to read the AI's output with real names and values reinstated.
+
+**Mask** — entities configured in `masking_rules` are permanently redacted. Person names become `5_J.D.` (sequence number + initials); payment card numbers become `411111XXXXXX1111` (first 6 + last 4 digits). Masked values cannot be restored — the session file has no record of them. Use this when permanent redaction is sufficient and you do not need to reinstate the original values.
+
+Set the preference once:
+```bash
+pseudoswapper mode mask      # permanent redaction going forward
+pseudoswapper mode tokenize  # back to reversible tokens
+pseudoswapper mode           # show current setting
+```
+
+Or override for a single run without changing the saved preference:
+```bash
+pseudoswapper document report.txt --mask
+pseudoswapper document report.txt --no-mask
+```
+
+The mode preference is stored in `~/.pseudoswapper_prefs.yaml` and is separate from the config file.
+
 ---
 
 ## 3. Setting up the config file
@@ -208,6 +231,26 @@ Valid values: `IP`, `DOMAIN`, `URL`, `PHONE`, `LOC`.
 The following types are **always tokenized** regardless of this setting: `PERSON`, `EMAIL`, `COMPANY`, `ORG`. Listing a protected type here has no effect.
 
 You can also override this per-run using `--passthrough` on the CLI (see [Section 5](#5-running-the-tool)). CLI flags are merged with the YAML list — they do not replace it.
+
+### masking_rules
+
+Specifies which entity types to permanently redact instead of tokenise. Masked values are not restorable — they are not stored in the session.
+
+```yaml
+masking_rules:
+  PERSON:
+    keep: initials          # "John Doe" (5th person detected) → "5_J.D."
+  CREDIT_CARD:
+    keep_first: 6           # digits to keep at the start
+    keep_last: 4            # digits to keep at the end
+    fill_char: "X"          # character to fill the middle — "4111111111111111" → "411111XXXXXX1111"
+```
+
+`PERSON` masking format: `{sequence}_{initials}` — e.g. the 5th unique name detected with initials J.D. becomes `5_J.D.`. The sequence number makes names with identical initials distinguishable, and the format is not recognised as a person name by NLP so multi-pass documents are safe.
+
+`CREDIT_CARD` is a new protected type (alongside `PERSON`, `EMAIL`, `COMPANY`, `ORG`). Without a masking rule it is tokenised to `[CREDIT_CARD_1]`; with a masking rule it is permanently masked to the configured digit pattern. It cannot be bypassed via `passthrough_types`.
+
+The `masking_rules` config block defines *how* to mask. Whether masking is actually applied is controlled by the `pseudoswapper mode` command or the `--mask`/`--no-mask` per-run flag — the config block has no effect while mode is `tokenize`.
 
 ### Security note
 
@@ -402,7 +445,7 @@ pseudoswapper workdir --show
 pseudoswapper workdir --clear
 ```
 
-The work directory is saved to `~/.pseudoswapper_prefs.yaml` (separate from your config file, so it is never affected by `config --edit`).
+The work directory and mode preference are both saved to `~/.pseudoswapper_prefs.yaml` (separate from your config file, so editing one never affects the other).
 
 **File filtering by mode:**
 - `document` — shows all non-structured files (excludes `.csv`, `.json`, `.xlsx`); includes `.docx`, `.pdf`, and plain text files; excludes already-redacted output files
@@ -410,6 +453,30 @@ The work directory is saved to `~/.pseudoswapper_prefs.yaml` (separate from your
 - `restore` — shows all non-hidden files (AI output can be saved with any extension)
 
 If a file is specified directly on the command line, the work directory is ignored for that invocation.
+
+### Tokenize and mask mode
+
+The active redaction style is controlled separately from document vs structured mode.
+
+```bash
+# Set persistent preference (stored in ~/.pseudoswapper_prefs.yaml)
+pseudoswapper mode mask      # permanent redaction using masking_rules from config
+pseudoswapper mode tokenize  # reversible tokenization (default)
+pseudoswapper mode           # show current setting
+pseudoswapper mode --show    # same as above
+```
+
+To override for a single run without changing the saved preference, use `--mask` or `--no-mask` on the `document` or `structured` command:
+
+```bash
+pseudoswapper document report.txt --mask        # apply masking this run only
+pseudoswapper document report.txt --no-mask     # force tokenize even if mode=mask
+pseudoswapper structured data.csv --mask
+```
+
+The flag takes priority over the saved preference. Priority order: `--mask`/`--no-mask` > saved `mode` > default (tokenize).
+
+**Note:** Masking requires `masking_rules` to be configured in `~/.pseudoswapper_config.yaml` (see [Section 3](#3-setting-up-the-config-file)). Running `--mask` with no `masking_rules` defined will still run without error — all entities will fall back to standard tokenization.
 
 ### Document mode
 
@@ -654,6 +721,14 @@ When `passthrough_types` is configured or `--passthrough` is used, the listed en
 **Impact:** The AI sees real IP addresses, domain names, URLs, phone numbers, or locations — whichever types you bypassed.
 
 **Mitigation:** Only bypass types whose values you are comfortable sharing. Protected types (`PERSON`, `EMAIL`, `COMPANY`, `ORG`) cannot be bypassed regardless of configuration. Use `pseudoswapper config --summary` to confirm exactly what will and won't be tokenized before running a redaction.
+
+### L10 — Masked values cannot be restored
+
+When mask mode is active, entities processed under masking_rules (person names, payment card numbers) are permanently redacted in the output. They are not stored in the session file. Running `pseudoswapper restore` will correctly restore all tokenised entities from the same run, but masked values remain as-is (e.g. `5_J.D.`, `411111XXXXXX1111`).
+
+**Impact:** If you need to reinstate a masked value, you must refer to the original file.
+
+**Mitigation:** Use tokenize mode (the default) when you need full restoration capability. Use mask mode only when permanent redaction is acceptable — for example, when sharing card data for brand identification without retaining the full PAN, or when sharing name-linked data where knowing the initials is sufficient context.
 
 ---
 
