@@ -11,6 +11,7 @@
 7. [Known limitations](#7-known-limitations)
 8. [Security notes](#8-security-notes)
 9. [Troubleshooting](#9-troubleshooting)
+10. [DSAR redaction](#10-dsar-redaction)
 
 ---
 
@@ -77,9 +78,23 @@ The key difference: each row is treated as a self-contained entity bundle. You n
 - You have a column that uniquely identifies each person (employee ID, user ID, full name)
 - You want the AI to know that a name and an email address belong to the same person
 
+### DSAR redaction — for compliance use cases
+
+Use `dsar-redaction` when you are responding to a Data Subject Access Request and need to provide a document to the requestor while permanently masking all other individuals' PII within the same file.
+
+- The requestor's own PII (name, email, employee ID, etc.) is preserved exactly as-is
+- All other detected PII is permanently masked — same format as mask mode
+- Always runs in mask mode regardless of the global mode preference
+- Supports all file formats accepted by `document` and `structured` (auto-detected by extension)
+
+See [Section 10](#10-dsar-redaction) for a full walkthrough.
+
 ### Quick decision guide
 
 ```
+Is this a DSAR response — preserve one person's PII, mask everyone else's?
+  → YES: use pseudoswapper dsar-redaction
+
 Is your file a CSV, spreadsheet (.xlsx), or JSON array?
   → YES: use pseudoswapper structured
   → NO:  use pseudoswapper document   (supports .txt, .log, .docx, .pdf, and other text formats)
@@ -576,6 +591,10 @@ pseudoswapper structured employees.xlsx \
 
 To apply force fields on every run without being prompted, add them to the config file under `structured.force_fields` (see [Section 3](#3-setting-up-the-config-file)).
 
+### DSAR redaction
+
+For DSAR compliance use cases, use `pseudoswapper dsar-redaction` instead of `document` or `structured`. See [Section 10](#10-dsar-redaction) for a full walkthrough including subject config setup.
+
 ### Verifying the output
 
 Before sharing the redacted file, open it and confirm:
@@ -890,3 +909,120 @@ Common YAML mistakes:
 - Missing `-` before list items under `employees` or `company_terms`
 
 If you are unsure, validate it against the example template in `pseudoswapper_config.example.yaml`.
+
+---
+
+## 10. DSAR redaction
+
+### What it does
+
+`pseudoswapper dsar-redaction` is purpose-built for responding to Data Subject Access Requests. When a person exercises their right to see their own data, you must provide documents that contain their information while protecting the privacy of any other individuals mentioned in the same files.
+
+`dsar-redaction` handles this in a single command:
+
+- The **data subject's own PII** (their name, email, employee ID, phone, credit card number, or any other values you specify) is **preserved exactly as-is** in the output.
+- All **other detected PII** is **permanently masked** — person names become `2_J.S.` style, card numbers are truncated to first 6 + last 4 digits.
+- The command always runs in mask mode regardless of the global `pseudoswapper mode` setting — there is no accidental tokenize path.
+- It accepts the same file formats as `document` and `structured`, auto-detected by extension.
+
+### The subject config file
+
+Each DSAR request requires a small YAML file that lists the requestor's known PII values. All fields are optional, but at least one must be present.
+
+```yaml
+# dsar_subject.yaml — one file per requestor
+full_name: Jane Doe
+first_name: Jane
+last_name: Doe
+email: jane.doe@example.com
+employee_id: EMP-1042
+phone: +61 400 123 456
+credit_card: "4111111111111111"
+```
+
+**Field behaviour:**
+
+| Field | Notes |
+|---|---|
+| `full_name` | Preserved as a full string. First and last name components are also derived and preserved independently — so "Jane" and "Doe" appearing alone in the document are also kept, unless `first_name` / `last_name` are separately specified. |
+| `first_name` | Preserved as-is. Overrides the derived component from `full_name`. |
+| `last_name` | Preserved as-is. Overrides the derived component from `full_name`. |
+| `email` | Preserved as-is (case-insensitive match). |
+| `employee_id` | Preserved as-is. |
+| `phone` | Preserved as-is. |
+| `credit_card` | Preserved as-is. If omitted, the subject's card number is masked like any other — add it here only if the requestor is entitled to see their own full card number in the output. |
+
+### Setting up the subject config
+
+**Option A — interactive setup (no file needed)**
+
+Run `dsar-redaction` without a `--subject-config` flag. If no `dsar_subject.yaml` exists in the current directory, the tool launches a setup wizard:
+
+```
+DSAR Subject Setup
+──────────────────────────────────────────
+Enter the data subject's known PII values.
+All fields are optional — at least one is required.
+
+  Full Name:
+  First Name:
+  Last Name:
+  Email Address:
+  Employee ID:
+  Phone Number:
+  Credit Card Number:
+
+Subject config saved: /path/to/dsar_subject.yaml
+```
+
+The file is saved to `dsar_subject.yaml` in the current directory and reused on subsequent runs.
+
+**Option B — supply an existing file**
+
+```bash
+pseudoswapper dsar-redaction report.pdf --subject-config ~/requests/jane_doe.yaml
+```
+
+Pointing to an explicit path with `--subject-config` overrides auto-discovery and the interactive wizard entirely.
+
+### Running a DSAR redaction
+
+```bash
+# Prose document — output: report.redacted.txt (or .docx/.pdf as appropriate)
+pseudoswapper dsar-redaction report.pdf --subject-config dsar_subject.yaml
+pseudoswapper dsar-redaction email_thread.docx --subject-config dsar_subject.yaml
+
+# Structured file — auto-detected by extension
+pseudoswapper dsar-redaction access_logs.csv --subject-config dsar_subject.yaml
+pseudoswapper dsar-redaction employees.xlsx --subject-config dsar_subject.yaml --anchor employee_id
+
+# No subject config argument — auto-discovers dsar_subject.yaml in CWD,
+# or launches the interactive setup wizard if it doesn't exist yet
+pseudoswapper dsar-redaction report.pdf
+
+# Supply an employee roster to improve name detection coverage
+pseudoswapper dsar-redaction report.pdf --subject-config dsar_subject.yaml --employees-csv ~/company_employees.csv
+```
+
+Output is written alongside the input file with a `.redacted` suffix, exactly as with `document` and `structured`.
+
+### Reviewing the output
+
+Before delivering the redacted file to the requestor, verify:
+
+1. The requestor's name, email, and other configured values appear exactly as they do in the original.
+2. Other people's names appear in masked form (e.g. `2_J.S.`, `3_A.J.`).
+3. Other email addresses appear as tokens (e.g. `[EMAIL_1]`).
+4. No full payment card numbers belonging to other individuals are visible.
+
+### Subject config and the work directory
+
+`dsar-redaction` respects the configured work directory for file selection (same as `document` and `structured`). The subject config file is separate and looked up in the current working directory, not the work directory — pass `--subject-config` with an explicit path if your subject YAML lives elsewhere.
+
+### Known limitations for DSAR
+
+**Subject values must be explicitly configured.** The tool has no way to infer which person is the requestor from the document content. If a surface form of the subject's name is not listed (e.g. a nickname, a maiden name, or an abbreviation) it will be masked rather than preserved. Include all expected surface forms in the subject config, or add `first_name` / `last_name` separately if they may appear in isolation.
+
+**Other PII types are tokenized, not masked.** Only entity types with masking rules applied (`PERSON` and `CREDIT_CARD` by default) are permanently masked. Other types — email addresses, phone numbers, organisation names — become reversible tokens (`[EMAIL_1]`, `[ORG_1]`). If your main config has no `masking_rules`, `dsar-redaction` automatically applies defaults for `PERSON` and `CREDIT_CARD`. For other types, configure `masking_rules` in `~/.pseudoswapper_config.yaml` if permanent masking is required.
+
+**`dsar-redaction` output cannot be restored.** Because it always runs in mask mode, the session that is created cannot be used to reinstate masked values. Keep the original source document — it is the only copy with unredacted content.

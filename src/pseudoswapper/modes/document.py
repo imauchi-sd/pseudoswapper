@@ -26,9 +26,19 @@ def _output_path(input_path: Path, force_suffix: str | None = None) -> Path:
     return input_path.parent / f"{input_path.stem}.redacted{suffix}"
 
 
-def _build_pipeline(config: dict, passthrough_types: set[str] | None, masking_rules: dict | None = None):
+def _build_pipeline(
+    config: dict,
+    passthrough_types: set[str] | None,
+    masking_rules: dict | None = None,
+    subject_values: frozenset[str] | None = None,
+):
     registry = EntityRegistry()
-    tokenizer = Tokenizer(registry, passthrough_types=passthrough_types, masking_rules=masking_rules or {})
+    tokenizer = Tokenizer(
+        registry,
+        passthrough_types=passthrough_types,
+        masking_rules=masking_rules or {},
+        subject_values=subject_values,
+    )
     detector = Detector(config)
     _pre_register_employees(config, tokenizer)
     return registry, tokenizer, detector
@@ -41,8 +51,8 @@ def _save(registry: EntityRegistry, cwd: Path) -> None:
         create_session(registry, cwd)
 
 
-def _redact_plain(file: Path, config: dict, cwd: Path, passthrough_types: set[str] | None, masking_rules: dict | None) -> Path:
-    registry, tokenizer, detector = _build_pipeline(config, passthrough_types, masking_rules)
+def _redact_plain(file: Path, config: dict, cwd: Path, passthrough_types: set[str] | None, masking_rules: dict | None, subject_values: frozenset[str] | None = None) -> Path:
+    registry, tokenizer, detector = _build_pipeline(config, passthrough_types, masking_rules, subject_values)
     text = file.read_text(encoding="utf-8", errors="replace")
     entities = detector.analyze(text)
     token_map = tokenizer.assign(entities)
@@ -53,9 +63,9 @@ def _redact_plain(file: Path, config: dict, cwd: Path, passthrough_types: set[st
     return out
 
 
-def _redact_docx(file: Path, config: dict, cwd: Path, passthrough_types: set[str] | None, masking_rules: dict | None) -> Path:
+def _redact_docx(file: Path, config: dict, cwd: Path, passthrough_types: set[str] | None, masking_rules: dict | None, subject_values: frozenset[str] | None = None) -> Path:
     from pseudoswapper.extractors.docx import apply_token_map, extract_text
-    registry, tokenizer, detector = _build_pipeline(config, passthrough_types, masking_rules)
+    registry, tokenizer, detector = _build_pipeline(config, passthrough_types, masking_rules, subject_values)
     text = extract_text(file)
     entities = detector.analyze(text)
     token_map = tokenizer.assign(entities)
@@ -65,9 +75,9 @@ def _redact_docx(file: Path, config: dict, cwd: Path, passthrough_types: set[str
     return out
 
 
-def _redact_pdf(file: Path, config: dict, cwd: Path, passthrough_types: set[str] | None, masking_rules: dict | None) -> Path:
+def _redact_pdf(file: Path, config: dict, cwd: Path, passthrough_types: set[str] | None, masking_rules: dict | None, subject_values: frozenset[str] | None = None) -> Path:
     from pseudoswapper.extractors.pdf import extract_text
-    registry, tokenizer, detector = _build_pipeline(config, passthrough_types, masking_rules)
+    registry, tokenizer, detector = _build_pipeline(config, passthrough_types, masking_rules, subject_values)
     text = extract_text(file)
     entities = detector.analyze(text)
     token_map = tokenizer.assign(entities)
@@ -84,11 +94,12 @@ def redact_document(
     cwd: Path,
     passthrough_types: set[str] | None = None,
     masking_rules: dict | None = None,
+    subject_values: frozenset[str] | None = None,
 ) -> Path:
     """Run document mode: detect, tokenize/mask, replace, write output, save session."""
     suffix = file.suffix.lower()
     if suffix == ".docx":
-        return _redact_docx(file, config, cwd, passthrough_types, masking_rules)
+        return _redact_docx(file, config, cwd, passthrough_types, masking_rules, subject_values)
     if suffix == ".pdf":
-        return _redact_pdf(file, config, cwd, passthrough_types, masking_rules)
-    return _redact_plain(file, config, cwd, passthrough_types, masking_rules)
+        return _redact_pdf(file, config, cwd, passthrough_types, masking_rules, subject_values)
+    return _redact_plain(file, config, cwd, passthrough_types, masking_rules, subject_values)

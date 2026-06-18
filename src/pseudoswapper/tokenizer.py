@@ -17,6 +17,7 @@ class Tokenizer:
         registry: EntityRegistry,
         passthrough_types: set[str] | None = None,
         masking_rules: dict | None = None,
+        subject_values: frozenset[str] | None = None,
     ) -> None:
         self._registry = registry
         # Silently drop any attempt to passthrough a protected type.
@@ -24,15 +25,26 @@ class Tokenizer:
             t for t in (passthrough_types or set()) if t not in PROTECTED_TYPES
         )
         self._masking_rules: dict = masking_rules or {}
+        # Normalised to lowercase for case-insensitive matching.
+        self._subject: frozenset[str] = frozenset(
+            v.strip().lower() for v in (subject_values or frozenset())
+        )
+
+    def is_subject(self, text: str) -> bool:
+        """Return True if *text* matches a known subject PII value (case-insensitive)."""
+        return bool(self._subject) and text.strip().lower() in self._subject
 
     def assign(self, entities: list[DetectedEntity]) -> dict[str, str]:
         """Return a mapping of original text → token/mask for all detected entities.
 
-        Entities whose type is in the passthrough set are left unreplaced.
+        Entities whose type is in the passthrough set, or whose text matches a
+        known subject value, are left unreplaced.
         """
         token_map: dict[str, str] = {}
         for entity in entities:
             if entity.entity_type in self._passthrough:
+                continue
+            if self.is_subject(entity.text):
                 continue
             token_map[entity.text] = self._assign_one(entity)
         return token_map

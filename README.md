@@ -23,18 +23,22 @@ The token-to-value mapping is held in a temporary, user-only directory for the d
 - You're sharing data with a contractor or external collaborator via a tool or platform you don't fully control
 - You're running a log file, support ticket, or incident report through a third-party debugging or analysis service
 - You want to share the structure and content of a dataset for analysis without revealing who or what it relates to
+- You are responding to a DSAR (Data Subject Access Request) and need to provide a document to the requestor while permanently masking all other individuals' PII within the same file
 
 ---
 
-## Two modes
+## Commands
 
-**Document mode** — for prose: emails, reports, articles, freeform text, Word documents (`.docx`), and PDFs (`.pdf`).
+**`document`** — for prose: emails, reports, articles, freeform text, Word documents (`.docx`), and PDFs (`.pdf`).
 Detects PII using a combination of exact-match config, regex patterns, and NLP (via [Presidio](https://github.com/microsoft/presidio) + spaCy `en_core_web_lg`).
 For `.docx` files, replacement is applied at the paragraph level and the output is a valid `.redacted.docx` file.
 For `.pdf` files, text is extracted and the output is a `.redacted.txt` file (layout is not preserved).
 
-**Structured mode** — for CSV, JSON, and XLSX files.
+**`structured`** — for CSV, JSON, and XLSX files.
 Uses an anchor field (a unique identifier column like `employee_id` or `full_name`) to correlate all fields in a row to a single entity. The same anchor value always produces the same token across all rows, preserving relational integrity.
+
+**`dsar-redaction`** — for Data Subject Access Request compliance.
+Permanently masks all PII in a document *except* the data subject's own information. The requestor's name, email, and other configured values are preserved exactly as-is; all other detected PII is permanently masked (same format as mask mode). Supports all file formats accepted by `document` and `structured`. A per-subject YAML config stores the requestor's known PII values — the tool prompts to create one interactively if it does not already exist.
 
 ---
 
@@ -106,6 +110,14 @@ pseudoswapper document report.txt --no-mask   # force tokenize even if mode=mask
 pseudoswapper restore ai_output.txt
 pseudoswapper restore             # → prompts file selection from work directory
 # → writes ai_output.restored.txt
+
+# DSAR: mask all PII except the data subject's own information
+# Supply a pre-built subject config:
+pseudoswapper dsar-redaction report.pdf --subject-config dsar_subject.yaml
+# Or let the tool prompt you for the subject's details and save dsar_subject.yaml:
+pseudoswapper dsar-redaction report.pdf
+# Works with structured files too (auto-detected by extension):
+pseudoswapper dsar-redaction access_logs.csv --subject-config dsar_subject.yaml
 
 # Show a human-readable summary of what will be tokenized
 pseudoswapper config --summary

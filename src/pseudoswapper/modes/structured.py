@@ -76,6 +76,8 @@ def _cell_str(value: Any) -> str:
 
 def _force_tokenize_cell(val: str, registry: EntityRegistry, tokenizer: Tokenizer) -> str:
     """Tokenize *val* unconditionally, bypassing NER detection."""
+    if tokenizer.is_subject(val):
+        return val
     existing = registry.lookup(val)
     if existing:
         return existing
@@ -92,6 +94,8 @@ def _redact_cell(val: str, detector: Detector, tokenizer: Tokenizer) -> str:
     span-level replacement. This prevents last-name/first-name fields in
     "Last, First" format from being split into ORG + PERSON tokens.
     """
+    if tokenizer.is_subject(val):
+        return val
     entities = detector.analyze(val)
     if not entities:
         return val
@@ -274,12 +278,18 @@ def redact_structured(
     passthrough_types: set[str] | None = None,
     on_row: Callable[[int, int], None] | None = None,
     masking_rules: dict | None = None,
+    subject_values: frozenset[str] | None = None,
 ) -> Path:
     """Run structured mode: read → anchor resolution → row processing → write → save session."""
     from pseudoswapper.modes.document import _pre_register_employees
 
     registry = EntityRegistry()
-    tokenizer = Tokenizer(registry, passthrough_types=passthrough_types, masking_rules=masking_rules or {})
+    tokenizer = Tokenizer(
+        registry,
+        passthrough_types=passthrough_types,
+        masking_rules=masking_rules or {},
+        subject_values=subject_values,
+    )
     detector = Detector(config)
     _pre_register_employees(config, tokenizer)
 

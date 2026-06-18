@@ -163,6 +163,9 @@ def _pick_file(work_dir: Path, mode: str) -> Path:
         elif mode == "document":
             if ext in _STRUCTURED_EXTENSIONS or ".redacted" in f.name:
                 continue
+        elif mode == "dsar":
+            if ".redacted" in f.name:
+                continue
         # mode == "restore": show all non-hidden files
         candidates.append(f)
 
@@ -556,3 +559,126 @@ def config_cmd(
     if edit:
         editor = os.environ.get("EDITOR", "nano")
         subprocess.run([editor, str(DEFAULT_CONFIG_PATH)])
+
+
+@app.command(name="dsar-redaction")
+def dsar_redaction_cmd(
+    file: Optional[Path] = typer.Argument(None, help="File to redact (any supported format)"),
+    subject_config: Optional[Path] = typer.Option(
+        None, "--subject-config", "-s",
+        help=(
+            "Path to a DSAR subject YAML file. "
+            "If omitted, looks for dsar_subject.yaml in the current directory "
+            "and launches an interactive setup wizard if it does not exist."
+        ),
+    ),
+    employees_csv: Optional[Path] = typer.Option(
+        None, "--employees-csv", "-e",
+        help="CSV file of employees to pre-register (full_name, email, username columns).",
+    ),
+    anchor: Optional[str] = typer.Option(
+        None, "--anchor", "-a",
+        help="Anchor column for structured files (CSV/JSON/XLSX). Auto-detected if omitted.",
+    ),
+) -> None:
+    """Redact all PII except the data subject's own information (DSAR use case).
+
+    Always runs in mask mode — other people's names, card numbers, and other PII
+    are permanently redacted. The data subject's own values (as defined in the
+    subject config) are preserved exactly as they appear in the source document.
+
+    Supports the same file formats as the 'document' and 'structured' commands.
+    Structured files (CSV, JSON, XLSX) are auto-detected by extension.
+
+    Subject config YAML fields (all optional; at least one required):
+
+      full_name, first_name, last_name, email, employee_id, phone, credit_card
+    """
+    from pseudoswapper.dsar import (
+        DSARSubjectError,
+        extract_subject_values,
+        load_subject,
+        prompt_and_save_subject,
+        resolve_subject_path,
+    )
+
+    file = _require_file(file, "dsar")
+
+    subject_path = resolve_subject_path(subject_config, Path.cwd())
+
+    if subject_path.exists():
+        try:
+            subject_data = load_subject(subject_path)
+        except DSARSubjectError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"Subject config: {subject_path}")
+    else:
+        if subject_config is not None:
+            typer.echo(f"Error: Subject config not found: {subject_config}", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"No subject config found at: {subject_path}")
+        subject_data = prompt_and_save_subject(subject_path)
+
+    subject_values = extract_subject_values(subject_data)
+
+    try:
+        config = load_config(employees_csv=employees_csv)
+    except ConfigError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    # DSAR always uses mask mode. Fall back to sensible defaults if the user
+    # has not configured masking_rules in their main config.
+    masking_rules: dict = config.get("masking_rules") or {"PERSON": {}, "CREDIT_CARD": {}}
+
+    is_structured = file.suffix.lower() in _STRUCTURED_EXTENSIONS
+
+    try:
+        if is_structured:
+            from pseudoswapper.modes.structured import redact_structured
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                transient=True,
+            ) as progress:
+                task = progress.add_task(f"Processing {file.name}", total=None)
+
+                def _on_row(i: int, total: int) -> None:
+                    if i == 0:
+                        progress.update(task, total=total)
+                    progress.advance(task)
+
+                out = redact_structured(
+                    file, config, Path.cwd(),
+                    cli_anchor=anchor,
+                    passthrough_types=set(),
+                    on_row=_on_row,
+                    masking_rules=masking_rules,
+                    subject_values=subject_values,
+                )
+        else:
+            from pseudoswapper.modes.document import redact_document
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                TimeElapsedColumn(),
+                transient=True,
+            ) as progress:
+                progress.add_task(f"Redacting {file.name}…", total=None)
+                out = redact_document(
+                    file, config, Path.cwd(),
+                    passthrough_types=set(),
+                    masking_rules=masking_rules,
+                    subject_values=subject_values,
+                )
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Redacted: {out}")
