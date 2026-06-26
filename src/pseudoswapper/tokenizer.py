@@ -18,11 +18,13 @@ class Tokenizer:
         passthrough_types: set[str] | None = None,
         masking_rules: dict | None = None,
         subject_values: frozenset[str] | None = None,
+        strict_protection: bool = True,
     ) -> None:
         self._registry = registry
         # Silently drop any attempt to passthrough a protected type.
+        _protected = PROTECTED_TYPES if strict_protection else frozenset({"CREDIT_CARD"})
         self._passthrough: frozenset[str] = frozenset(
-            t for t in (passthrough_types or set()) if t not in PROTECTED_TYPES
+            t for t in (passthrough_types or set()) if t not in _protected
         )
         self._masking_rules: dict = masking_rules or {}
         # Normalised to lowercase for case-insensitive matching.

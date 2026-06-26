@@ -110,3 +110,47 @@ def test_detected_entity_has_correct_span():
     assert email_hits
     for hit in email_hits:
         assert text[hit.start:hit.end] == hit.text
+
+
+# ── Stage B: redact-mode-only entity types ────────────────────────────────────
+
+def test_amount_detected_in_redact_mode():
+    cfg = make_config()
+    d = Detector(cfg, redact_mode=True)
+    results = d.analyze("Salary: $52,340 per year")
+    assert any(e.entity_type == "AMOUNT" for e in results)
+
+
+def test_amount_not_detected_in_standard_mode():
+    cfg = make_config()
+    d = Detector(cfg)
+    results = d.analyze("Salary: $52,340 per year")
+    assert not any(e.entity_type == "AMOUNT" for e in results)
+
+
+def test_iban_detected_in_redact_mode():
+    cfg = make_config()
+    d = Detector(cfg, redact_mode=True)
+    results = d.analyze("IBAN: GB29NWBK60161331926819")
+    assert any(e.entity_type == "IBAN_CODE" for e in results)
+
+
+def test_iban_not_detected_in_standard_mode():
+    cfg = make_config()
+    d = Detector(cfg)
+    results = d.analyze("IBAN: GB29NWBK60161331926819")
+    assert not any(e.entity_type == "IBAN_CODE" for e in results)
+
+
+def test_mac_address_detected_in_redact_mode():
+    cfg = make_config()
+    d = Detector(cfg, redact_mode=True)
+    results = d.analyze("Device MAC: 00:1A:2B:3C:4D:5E")
+    assert any(e.entity_type == "MAC_ADDRESS" for e in results)
+
+
+def test_mac_address_not_detected_in_standard_mode():
+    cfg = make_config()
+    d = Detector(cfg)
+    results = d.analyze("Device MAC: 00:1A:2B:3C:4D:5E")
+    assert not any(e.entity_type == "MAC_ADDRESS" for e in results)

@@ -12,6 +12,7 @@
 8. [Security notes](#8-security-notes)
 9. [Troubleshooting](#9-troubleshooting)
 10. [DSAR redaction](#10-dsar-redaction)
+11. [One-time redaction (redact command)](#11-one-time-redaction-redact-command)
 
 ---
 
@@ -89,15 +90,31 @@ Use `dsar-redaction` when you are responding to a Data Subject Access Request an
 
 See [Section 10](#10-dsar-redaction) for a full walkthrough.
 
+### One-time redaction (`redact`) — for incident reports and internal distribution
+
+Use `pseudoswapper redact` when you need to permanently sanitise a file for sharing with internal teams and there is no restore path. Unlike `document`/`structured`, the `redact` command:
+
+- Never writes a session — there is nothing to restore
+- Allows named individuals and email addresses to remain visible (configurable with `--passthrough` or a profile), so the security or operations team can act on the report
+- Detects additional data types relevant to incident response: financial figures (`AMOUNT`), EU bank accounts (`IBAN_CODE`), and MAC addresses (`MAC_ADDRESS`)
+- Accepts `.eml` and `.msg` email files directly
+- Accepts a folder path to process multiple files in one pass (batch mode)
+
+See [Section 11](#11-one-time-redaction-redact-command) for a full walkthrough.
+
 ### Quick decision guide
 
 ```
 Is this a DSAR response — preserve one person's PII, mask everyone else's?
   → YES: use pseudoswapper dsar-redaction
 
-Is your file a CSV, spreadsheet (.xlsx), or JSON array?
-  → YES: use pseudoswapper structured
-  → NO:  use pseudoswapper document   (supports .txt, .log, .docx, .pdf, and other text formats)
+Do you need a reversible session you can restore after sharing with an AI?
+  → YES: use pseudoswapper document (prose, .docx, .pdf)
+         or pseudoswapper structured (.csv, .json, .xlsx)
+
+Do you need to permanently sanitise for an internal audience with no restore needed?
+  → YES: use pseudoswapper redact
+         (supports .txt, .docx, .pdf, .eml, .msg, .csv, .json, .xlsx; also accepts a folder)
 ```
 
 ### Tokenize vs mask
@@ -219,6 +236,24 @@ structured:
 `force_fields` is optional. When set, every non-empty cell in those columns is tokenized unconditionally — no NLP detection is run on them. Use this for name or email columns where spaCy's entity recognition is unreliable (non-Western names, "Last, First" formatting, short strings with no prose context). Values already established by the anchor or correlated-field logic are not overwritten.
 
 See [Section 4](#4-anchor-field-selection-structured-mode) for guidance on anchor field selection.
+
+### redact_profiles
+
+Save named passthrough configurations for repeated `redact` workflows. Each profile lists entity types that should remain visible in the output — useful for incident response where the security team needs to see email addresses and names to act on the report.
+
+```yaml
+redact_profiles:
+  incident_report:
+    passthrough: [PERSON, EMAIL, COMPANY, ORG]
+  financial_audit:
+    passthrough: [PERSON, EMAIL]
+```
+
+`CREDIT_CARD` is always removed from any profile's passthrough list — it is protected in all modes.
+
+Usage: `pseudoswapper redact report.xlsx --profile incident_report`
+
+CLI `--passthrough` flags are merged with the profile (union semantics) — the profile does not override the flags.
 
 ### exclude_terms
 
@@ -1026,3 +1061,137 @@ Before delivering the redacted file to the requestor, verify:
 **Other PII types are tokenized, not masked.** Only entity types with masking rules applied (`PERSON` and `CREDIT_CARD` by default) are permanently masked. Other types — email addresses, phone numbers, organisation names — become reversible tokens (`[EMAIL_1]`, `[ORG_1]`). If your main config has no `masking_rules`, `dsar-redaction` automatically applies defaults for `PERSON` and `CREDIT_CARD`. For other types, configure `masking_rules` in `~/.pseudoswapper_config.yaml` if permanent masking is required.
 
 **`dsar-redaction` output cannot be restored.** Because it always runs in mask mode, the session that is created cannot be used to reinstate masked values. Keep the original source document — it is the only copy with unredacted content.
+
+---
+
+## 11. One-time redaction (`redact` command)
+
+### What it does
+
+`pseudoswapper redact` permanently sanitises files for sharing with internal teams. It differs from `document`/`structured` in three key ways:
+
+1. **No session is written** — there is no restore path. The output file is the final artifact.
+2. **Relaxed protection model** — only `CREDIT_CARD` is unconditionally redacted. Names, email addresses, company names, and org names are redacted by default but can be made visible with `--passthrough`.
+3. **Extended entity detection** — three additional types are detected in redact mode: `AMOUNT`, `IBAN_CODE`, and `MAC_ADDRESS`.
+
+### Supported file types
+
+| Extension | Output | Notes |
+|---|---|---|
+| `.txt`, `.log`, and other plain text | `.redacted.txt` | |
+| `.docx` | `.redacted.docx` | Paragraph-level replacement |
+| `.pdf` | `.redacted.txt` | Text extracted; layout not preserved |
+| `.eml` | `.redacted.txt` | Headers + body extracted |
+| `.msg` | `.redacted.txt` | Outlook compound document; headers + body extracted |
+| `.csv` | `.redacted.csv` | |
+| `.json` | `.redacted.json` | |
+| `.xlsx` / `.xls` | `.redacted.xlsx` | All sheets redacted; shared registry across sheets |
+
+### Additional entity types in redact mode
+
+| Type | Detected by | Token format | Notes |
+|---|---|---|---|
+| `AMOUNT` | spaCy `MONEY` NER | `[AMOUNT_1]` | Financial figures — full token only (no partial masking or bucketing) |
+| `IBAN_CODE` | Presidio `IbanRecognizer` | `[IBAN_CODE_1]` | EU bank account numbers |
+| `MAC_ADDRESS` | Presidio `MacAddressRecognizer` | `[MAC_ADDRESS_1]` | Network interface identifiers |
+
+All three are bypassable via `--passthrough AMOUNT`, `--passthrough IBAN_CODE`, or `--passthrough MAC_ADDRESS`.
+
+### Running a single-file redaction
+
+```bash
+# Prose, Word document, or PDF
+pseudoswapper redact incident_report.txt
+pseudoswapper redact forensic_notes.docx
+pseudoswapper redact exported_log.pdf
+
+# Email files
+pseudoswapper redact phishing_sample.eml
+pseudoswapper redact forwarded_email.msg
+
+# Structured data — all sheets redacted
+pseudoswapper redact affected_accounts.xlsx
+pseudoswapper redact access_log.csv
+
+# Leave names and email addresses visible for follow-up
+pseudoswapper redact incident_report.txt --passthrough PERSON --passthrough EMAIL
+
+# Use a named profile from config
+pseudoswapper redact incident_report.txt --profile incident_report
+
+# Supply an employee roster
+pseudoswapper redact report.txt --employees-csv ~/company_employees.csv
+```
+
+### Relaxed protection model and `--passthrough`
+
+In `document`/`structured`, `--passthrough` silently ignores attempts to bypass protected types (`PERSON`, `EMAIL`, `COMPANY`, `ORG`). In `redact`, those types can be passed through — they are not protected.
+
+This is intentional: an incident report saying "[PERSON_1] needs MFA reset and [EMAIL_1] is the affected account" is useless. The security team needs the actual names and email addresses to act.
+
+`CREDIT_CARD` remains unconditionally protected in all modes (PCI-DSS).
+
+### Named profiles
+
+Save passthrough configurations for repeated workflows in `~/.pseudoswapper_config.yaml`:
+
+```yaml
+redact_profiles:
+  incident_report:
+    passthrough: [PERSON, EMAIL, COMPANY, ORG]
+  financial_review:
+    passthrough: [PERSON, EMAIL]
+```
+
+```bash
+pseudoswapper redact report.xlsx --profile incident_report
+```
+
+CLI `--passthrough` flags are merged with the profile. `CREDIT_CARD` is always excluded from the effective passthrough set regardless of what a profile lists.
+
+### Batch folder mode
+
+Supply a directory path instead of a file path to process all supported files in one pass:
+
+```bash
+# Process all supported files in a folder
+pseudoswapper redact ~/incident-artifacts/
+
+# Include files in subdirectories
+pseudoswapper redact ~/incident-artifacts/ --recursive
+
+# Combine with passthrough
+pseudoswapper redact ~/incident-artifacts/ --passthrough EMAIL --passthrough PERSON
+```
+
+**What gets processed:** Files with extensions `.txt`, `.docx`, `.pdf`, `.eml`, `.msg`, `.csv`, `.json`, `.xlsx`, `.xls`. Hidden files (`.`-prefixed) and already-redacted files (`.redacted.` in name) are skipped.
+
+**Shared entity registry:** The entire batch uses one `EntityRegistry`. If `Alice Wong` appears in `email_001.eml` and `attachment_003.docx`, both files produce the same mask. This ensures consistent anonymisation across the full artifact set.
+
+**Progress output:**
+
+```
+Redacting files in: /Users/you/incident-artifacts
+Extensions: .csv, .docx, .eml, .json, .msg, .pdf, .txt, .xlsx, .xls
+
+  ✓ phishing_email.eml  →  phishing_email.redacted.txt
+  ✓ affected_users.xlsx →  affected_users.redacted.xlsx
+  ✗ corrupt_file.msg    →  error: ...
+
+Done: 2 succeeded, 1 failed, 3 total
+```
+
+### EML and MSG email files
+
+Both formats produce a `.redacted.txt` output containing:
+
+1. A structured header block (From, To, Cc, Subject)
+2. The email body (plain text preferred; HTML tags stripped if only HTML is available)
+
+PII in both headers and body is detected and redacted together. Attachments are not extracted inline — save attachments separately and include them in a batch folder redaction.
+
+### Known limitations
+
+- **Email attachments not extracted inline** — run batch mode on a folder containing both the email file and separately-saved attachments.
+- **`AMOUNT` detection is English-only** — spaCy's `MONEY` NER is trained on English-language text. Non-English monetary expressions may be missed.
+- **No session = no restore** — `redact` is one-way. Keep the original file if you may need the unredacted values later.

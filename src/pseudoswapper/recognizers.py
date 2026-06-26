@@ -88,3 +88,42 @@ class EmployeeRecognizer(PatternRecognizer):
                     )
                 )
         return results
+
+
+from presidio_analyzer import LocalRecognizer
+from presidio_analyzer.nlp_engine import NlpArtifacts as _NlpArtifacts
+
+
+class AmountRecognizer(LocalRecognizer):
+    """Detects monetary amounts using spaCy's MONEY NER label."""
+
+    ENTITY_TYPE = "MONEY"
+
+    def __init__(self) -> None:
+        super().__init__(supported_entities=[self.ENTITY_TYPE], supported_language="en")
+
+    def load(self) -> None:
+        pass
+
+    def analyze(
+        self,
+        text: str,
+        entities: list[str],
+        nlp_artifacts: Optional[_NlpArtifacts] = None,
+    ) -> list[RecognizerResult]:
+        if self.ENTITY_TYPE not in entities:
+            return []
+        if not nlp_artifacts or not nlp_artifacts.entities:
+            return []
+        results: list[RecognizerResult] = []
+        for ent in nlp_artifacts.entities:
+            if ent.label_ == "MONEY":
+                results.append(
+                    RecognizerResult(
+                        entity_type=self.ENTITY_TYPE,
+                        start=ent.start_char,
+                        end=ent.end_char,
+                        score=0.85,
+                    )
+                )
+        return results

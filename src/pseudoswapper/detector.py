@@ -20,6 +20,9 @@ _SUPPORTED_ENTITIES = [
     "CREDIT_CARD",
 ]
 
+# Additional entity types active only in redact mode.
+_REDACT_EXTRA_ENTITIES = ["MONEY", "IBAN_CODE", "MAC_ADDRESS"]
+
 # Map Presidio entity type names to our internal token-type names.
 _ENTITY_TYPE_MAP: dict[str, str] = {
     "PERSON": "PERSON",
@@ -32,6 +35,9 @@ _ENTITY_TYPE_MAP: dict[str, str] = {
     "LOCATION": "LOC",
     "COMPANY": "COMPANY",
     "CREDIT_CARD": "CREDIT_CARD",
+    "MONEY":       "AMOUNT",
+    "IBAN_CODE":   "IBAN_CODE",
+    "MAC_ADDRESS": "MAC_ADDRESS",
 }
 
 
@@ -44,7 +50,7 @@ class DetectedEntity:
     score: float
 
 
-def _build_engine(config: dict) -> AnalyzerEngine:
+def _build_engine(config: dict, redact_mode: bool = False) -> AnalyzerEngine:
     provider = NlpEngineProvider(nlp_configuration={
         "nlp_engine_name": "spacy",
         "models": [{"lang_code": "en", "model_name": "en_core_web_lg"}],
@@ -60,23 +66,30 @@ def _build_engine(config: dict) -> AnalyzerEngine:
     if employees:
         engine.registry.add_recognizer(EmployeeRecognizer(employees))
 
+    if redact_mode:
+        from .recognizers import AmountRecognizer
+        engine.registry.add_recognizer(AmountRecognizer())
+
     return engine
 
 
 class Detector:
     """Wraps Presidio AnalyzerEngine. Call analyze(text) to get detected entities."""
 
-    def __init__(self, config: dict) -> None:
-        self._engine = _build_engine(config)
+    def __init__(self, config: dict, redact_mode: bool = False) -> None:
+        self._engine = _build_engine(config, redact_mode=redact_mode)
         self._exclude: set[str] = {
             t.lower() for t in config.get("exclude_terms", [])
         }
+        self._entities = (
+            _SUPPORTED_ENTITIES + _REDACT_EXTRA_ENTITIES if redact_mode else _SUPPORTED_ENTITIES
+        )
 
     def analyze(self, text: str) -> list[DetectedEntity]:
         raw = self._engine.analyze(
             text=text,
             language="en",
-            entities=_SUPPORTED_ENTITIES,
+            entities=self._entities,
             allow_list=list(self._exclude) if self._exclude else None,
         )
 

@@ -35,7 +35,10 @@ For `.docx` files, replacement is applied at the paragraph level and the output 
 For `.pdf` files, text is extracted and the output is a `.redacted.txt` file (layout is not preserved).
 
 **`structured`** — for CSV, JSON, and XLSX files.
-Uses an anchor field (a unique identifier column like `employee_id` or `full_name`) to correlate all fields in a row to a single entity. The same anchor value always produces the same token across all rows, preserving relational integrity.
+Uses an anchor field (a unique identifier column like `employee_id` or `full_name`) to correlate all fields in a row to a single entity. The same anchor value always produces the same token across all rows, preserving relational integrity. Multi-sheet XLSX files are fully supported — all sheets are redacted and written back to the output workbook using a shared entity registry.
+
+**`redact`** — for one-time permanent sanitisation without a session.
+Accepts a single file or a folder. Supports all file types from `document`/`structured` plus `.eml` and `.msg` email files. Uses a relaxed protection model so names and emails can be left visible for internal teams (configurable with `--passthrough` or a named profile). Detects three additional entity types useful in incident response: financial figures (`AMOUNT`), EU bank accounts (`IBAN_CODE`), and MAC addresses (`MAC_ADDRESS`). When a folder is supplied, all supported files are processed in one pass using a shared entity registry — the same name produces the same mask across every file in the batch.
 
 **`dsar-redaction`** — for Data Subject Access Request compliance.
 Permanently masks all PII in a document *except* the data subject's own information. The requestor's name, email, and other configured values are preserved exactly as-is; all other detected PII is permanently masked (same format as mask mode). Supports all file formats accepted by `document` and `structured`. A per-subject YAML config stores the requestor's known PII values — the tool prompts to create one interactively if it does not already exist.
@@ -111,6 +114,22 @@ pseudoswapper restore ai_output.txt
 pseudoswapper restore             # → prompts file selection from work directory
 # → writes ai_output.restored.txt
 
+# One-time permanent redaction — no session, no restore path
+# Single file (any supported format including .eml and .msg)
+pseudoswapper redact incident_report.txt
+pseudoswapper redact phishing_sample.eml
+pseudoswapper redact affected_accounts.xlsx
+
+# Leave names and emails visible so the security team can act on the report
+pseudoswapper redact incident_report.txt --passthrough PERSON --passthrough EMAIL
+
+# Use a named profile from config
+pseudoswapper redact report.xlsx --profile incident_report
+
+# Batch: process all supported files in a folder
+pseudoswapper redact ~/incident-artifacts/
+pseudoswapper redact ~/incident-artifacts/ --recursive
+
 # DSAR: mask all PII except the data subject's own information
 # Supply a pre-built subject config:
 pseudoswapper dsar-redaction report.pdf --subject-config dsar_subject.yaml
@@ -146,6 +165,7 @@ pseudoswapper clear-session
 - **`exclude_terms`** — words to exclude from NLP detection (prevents over-redaction of common names)
 - **`passthrough_types`** — entity types to leave unreplaced (e.g. `IP`, `DOMAIN`, `URL`, `PHONE`, `LOC`); useful when certain technical values carry analytical value. Protected types (`PERSON`, `EMAIL`, `COMPANY`, `ORG`) cannot be bypassed. Also overridable per-run via `--passthrough` on the CLI.
 - **`masking_rules`** — entity types to permanently redact rather than tokenise. Masked values are not restorable. Supported types: `PERSON` (replaces names with initials + sequence, e.g. `5_J.D.`) and `CREDIT_CARD` (retains first/last digits, e.g. `411111XXXXXX1111`). `CREDIT_CARD` is a new protected type added alongside `PERSON`, `EMAIL`, `COMPANY`, and `ORG` — it cannot be bypassed via `passthrough_types`.
+- **`redact_profiles`** — named passthrough configurations for `pseudoswapper redact`. Each profile lists entity types that should remain visible. `CREDIT_CARD` is always excluded regardless of what a profile lists.
 - **`structured.anchor_field`** — default anchor column for structured mode
 - **`structured.correlated_fields`** — columns to correlate to the anchor entity per row
 - **`structured.force_fields`** — columns to always tokenize unconditionally, bypassing NLP (useful for name columns with non-Western names or non-standard formatting)
@@ -163,6 +183,7 @@ See `pseudoswapper_config.example.yaml` for a fully annotated template, and `emp
 | Event | What happens |
 |---|---|
 | `pseudoswapper document` or `pseudoswapper structured` succeeds | Session created; `.pseudoswapper_session` pointer written to CWD |
+| `pseudoswapper redact` succeeds (file or folder) | No session created — output files only; no restore path |
 | `pseudoswapper restore` succeeds | Session and pointer file deleted automatically |
 | `pseudoswapper restore` fails | Session preserved; fix the issue and retry |
 | `pseudoswapper clear-session` | Deletes session and pointer file; abandons current session |
@@ -189,6 +210,8 @@ See [`PRIVACY.md`](PRIVACY.md) for the full privacy policy and user responsibili
 - Single anchor field only — composite identity (e.g. `tenant_id` + `user_id`) is not supported in v1.
 - `.docx` is supported natively — output is a `.redacted.docx` file. Intra-paragraph run-level formatting (bold/italic on specific words) is lost in paragraphs that contain a replaced token.
 - `.pdf` is supported natively — output is always a `.redacted.txt` file (layout not preserved). Scanned/image-only PDFs with no embedded text are not supported.
+- `.eml` and `.msg` are supported in `redact` mode only — attachments are not extracted inline; save attachments separately and include them in a batch folder redaction.
+- `AMOUNT` detection (financial figures) relies on spaCy's English-language `MONEY` NER and may miss non-English monetary expressions.
 
 See [`USER_GUIDE.md`](USER_GUIDE.md) for full documentation including anchor field selection, restoration behaviour, and all known limitations.
 
@@ -207,7 +230,7 @@ If this tool saves you time, consider buying me a coffee.
 ```bash
 source .venv/bin/activate
 pip install -e ".[dev]"
-python -m pytest          # 158 tests, all passing
+python -m pytest          # 229 tests, all passing
 ```
 
 **Python interpreter:** the project requires the `.venv` at the project root (Python 3.12). Always activate it before running any `python` or `pytest` commands.

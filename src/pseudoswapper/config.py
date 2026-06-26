@@ -90,6 +90,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH, employees_csv: Path | None = N
     data.setdefault("passthrough_types", [])
     data.setdefault("masking_rules", {})
     data.setdefault("structured", {})
+    data.setdefault("redact_profiles", {})
     data["structured"].setdefault("anchor_field", None)
     data["structured"].setdefault("correlated_fields", [])
 
@@ -122,7 +123,20 @@ def default_config() -> dict:
             "anchor_field": None,
             "correlated_fields": [],
         },
+        "redact_profiles": {},
     }
+
+
+def get_redact_profile(config: dict, name: str) -> dict:
+    """Return the named redact profile dict, or raise ConfigError if not found."""
+    profiles = config.get("redact_profiles") or {}
+    if name not in profiles:
+        available = ", ".join(profiles.keys()) if profiles else "(none)"
+        raise ConfigError(
+            f"Redact profile '{name}' not found in config. "
+            f"Available profiles: {available}"
+        )
+    return profiles[name] or {}
 
 
 def _load_prefs() -> dict:

@@ -16,22 +16,25 @@ pseudoswapper/
 │   └── pseudoswapper/
 │       ├── __init__.py
 │       ├── cli.py                      # Typer entry point — thin layer only
-│       ├── config.py                   # YAML loader, ConfigError, _require helper
+│       ├── config.py                   # YAML loader, ConfigError, _require helper; redact_profiles
 │       ├── session.py                  # Temp dir lifecycle, .pseudoswapper_session pointer
 │       ├── entity_registry.py          # In-memory token store, serialisation
-│       ├── detector.py                 # Presidio AnalyzerEngine wrapper
-│       ├── recognizers.py              # CompanyTermsRecognizer, EmployeeRecognizer
-│       ├── tokenizer.py                # DetectedEntity → token, person entity model
+│       ├── detector.py                 # Presidio AnalyzerEngine wrapper; redact_mode flag
+│       ├── recognizers.py              # CompanyTermsRecognizer, EmployeeRecognizer, AmountRecognizer
+│       ├── tokenizer.py                # DetectedEntity → token, person entity model; strict_protection
 │       ├── replacer.py                 # Longest-match-first text replacement
 │       ├── restore.py                  # Token reversal with fuzzy/case-insensitive match
 │       ├── modes/
 │       │   ├── __init__.py
-│       │   ├── document.py             # Document mode orchestrator (dispatches on file suffix)
-│       │   └── structured.py          # Structured mode (CSV / JSON / XLSX)
+│       │   ├── document.py             # Document mode orchestrator; EML/MSG dispatch; shared pipeline
+│       │   ├── structured.py          # Structured mode (CSV / JSON / XLSX); multi-sheet XLSX
+│       │   └── redact.py              # One-time redact: redact_file, redact_batch
 │       └── extractors/
 │           ├── __init__.py
 │           ├── docx.py                # python-docx paragraph extractor + token writer
-│           └── pdf.py                 # pdfplumber text extractor; UnsupportedFileError
+│           ├── pdf.py                 # pdfplumber text extractor; UnsupportedFileError
+│           ├── eml.py                 # RFC 2822 EML extractor (stdlib email module)
+│           └── msg.py                 # Outlook MSG extractor (extract-msg)
 └── tests/
     ├── __init__.py
     ├── conftest.py                     # Shared config builders, tmp_path helpers
@@ -41,7 +44,9 @@ pseudoswapper/
     │   ├── sample_document.pdf         # Same content as .txt; generated via reportlab
     │   ├── sample_structured.csv
     │   ├── sample_structured.json
-    │   └── sample_structured.xlsx
+    │   ├── sample_structured.xlsx
+    │   ├── sample_email.eml            # RFC 2822 fixture with PII in headers and body
+    │   └── sample_email.msg            # Outlook MSG fixture generated via OleWriter
     ├── test_config.py
     ├── test_entity_registry.py
     ├── test_session.py
@@ -52,7 +57,10 @@ pseudoswapper/
     ├── test_document.py
     ├── test_structured.py
     ├── test_docx.py                    # 11 tests for .docx document mode support
-    └── test_pdf.py                     # 11 tests for .pdf document mode support
+    ├── test_pdf.py                     # 11 tests for .pdf document mode support
+    ├── test_redact.py                  # redact command + batch mode tests
+    ├── test_eml.py                     # EML extractor and redact dispatch tests
+    └── test_msg.py                     # MSG extractor and redact dispatch tests
 ```
 
 ---
@@ -70,10 +78,13 @@ pseudoswapper/
 | `tokenizer.py` | Takes `list[DetectedEntity]` + raw text → `dict[original_text → token]`. Owns the person entity model: on first encounter of a full name, registers first/last surface forms too. Owns correlated email logic for structured mode. |
 | `replacer.py` | Takes text + token map → redacted text. Sorts replacements longest-first so full names are caught before their parts. |
 | `restore.py` | Finds all `[TOKEN_N]` patterns in text via regex. Looks up each in the entity registry's reverse map. Case-insensitive matching to tolerate AI reformatting. |
-| `modes/document.py` | Orchestrates document mode: dispatches on file suffix (`.docx` vs plain text) → pre-register YAML employees → detect → tokenize → replace → write `.redacted` output → save session. |
-| `modes/structured.py` | Orchestrates structured mode: reads CSV/JSON/XLSX → determines anchor field → processes row by row → writes `.redacted` output → saves session. |
+| `modes/document.py` | Orchestrates document mode: dispatches on file suffix (`.docx`, `.pdf`, `.eml`, `.msg`, plain text) → pre-register YAML employees → detect → tokenize → replace → write `.redacted` output → save session. Accepts optional `_registry`/`_tokenizer` for shared-pipeline batch use. |
+| `modes/structured.py` | Orchestrates structured mode: reads CSV/JSON (single-sheet) or all XLSX sheets via `_read_xlsx_sheets`/`_write_xlsx_sheets` → determines anchor field → processes row by row → writes `.redacted` output → saves session. Accepts optional `_registry`/`_tokenizer`. |
+| `modes/redact.py` | One-time permanent redaction: `redact_file(file, config)` dispatches to structured or document pipeline with `write_session=False`, `strict_protection=False`, `redact_mode=True`. `redact_batch(directory, config, recursive)` discovers supported files, builds one shared `EntityRegistry` + `Tokenizer`, processes each file, collects per-file results. |
 | `extractors/docx.py` | `extract_text(path)` — concatenates all paragraph runs for PII detection. `apply_token_map(src, token_map, out)` — paragraph-level replacement written to a new `.docx` file. |
 | `extractors/pdf.py` | `extract_text(path) -> str` — extracts text page-by-page via pdfplumber, joins with `\n\n`. Raises `UnsupportedFileError` for image-only PDFs with no extractable text. |
+| `extractors/eml.py` | `extract_text(path) -> str` — parses RFC 2822 with stdlib `email` module; extracts From/To/Cc/Subject header block + prefers `text/plain` body, falls back to HTML-stripped `text/html`. Raises `UnsupportedEmailError` if no readable content. |
+| `extractors/msg.py` | `extract_text(path) -> str` — opens Outlook MSG with `extract_msg`; extracts sender, recipients, subject, body. Same output format as EML extractor. Raises `UnsupportedEmailError` if no readable content. |
 
 ---
 
@@ -93,6 +104,9 @@ pseudoswapper/
 | Organisation (NLP) | `[ORG_1]` | |
 | Location (NLP) | `[LOC_1]` | |
 | YAML company term | `[COMPANY_1]` | Highest-priority recognizer |
+| Financial figure (redact mode) | `[AMOUNT_1]` | spaCy MONEY NER; full token only (no partial masking) |
+| EU bank account (redact mode) | `[IBAN_CODE_1]` | Presidio IbanRecognizer |
+| MAC address (redact mode) | `[MAC_ADDRESS_1]` | Presidio MacAddressRecognizer |
 
 ---
 
@@ -427,6 +441,187 @@ load .pseudoswapper_session → temp session path
 - Image-only PDF raises `UnsupportedFileError` — PASS
 - Full fixture contains no known PII — PASS
 - 11 tests, all passing. Total suite: 152 tests, all passing.
+
+---
+
+---
+
+## Phase 2 — Incident Response & One-Time Redaction
+
+Reference decisions: DESIGN.md Decision 9–14.
+
+Driven by real incident response workflow: post-AiTM analysis requiring multi-sheet Excel exposure
+reports, email artifacts, and one-time permanent redaction for internal distribution.
+
+---
+
+### Stage A — `redact` command + multi-sheet XLSX `[x]`
+
+**New dependency:** none
+
+**Deliverables**
+
+- `src/pseudoswapper/modes/redact.py` — new mode orchestrator
+  - `redact_file(file, config, passthrough_types, profile)` — single entry point; dispatches on
+    file suffix to document or structured pipeline; never writes a session
+  - Shared `EntityRegistry` passed through the pipeline so output token/mask is consistent across
+    the file
+- `src/pseudoswapper/modes/structured.py` — multi-sheet XLSX support
+  - `_read_xlsx_sheets(file)` → `dict[sheet_name, (rows, columns)]`
+  - `_write_xlsx_sheets(sheets, out_path)` — `pd.ExcelWriter` writing all sheets back
+  - `redact_structured` updated to call multi-sheet path for `.xlsx`/`.xls`; single-sheet path
+    unchanged for CSV and JSON
+- `src/pseudoswapper/config.py` — `redact_profiles` block loaded and validated
+  - `get_redact_profile(config, name)` → `dict` or raises `ConfigError` if not found
+- `src/pseudoswapper/cli.py`
+  - New `redact` command with `--passthrough` (accepts any type including PERSON/EMAIL/COMPANY/ORG)
+    and `--profile` flags
+  - `_resolve_redact_passthrough(config, profile, cli_flags)` — merges profile passthrough with CLI
+    flags, always strips CREDIT_CARD from result
+- `pseudoswapper_config.example.yaml` — `redact_profiles` block added with commented example
+- `tests/test_redact.py`
+- `tests/test_structured.py` — extended with multi-sheet cases
+
+**Token format additions**
+
+| Type | Token |
+|---|---|
+| `AMOUNT` | `[AMOUNT_1]` |
+| `IBAN_CODE` | `[IBAN_CODE_1]` |
+| `MAC_ADDRESS` | `[MAC_ADDRESS_1]` |
+
+**Tests**
+
+- `redact` command produces output file with `.redacted` suffix, no session created
+- CREDIT_CARD always masked even when listed in `--passthrough`
+- PERSON passthroughed when `--passthrough PERSON` supplied — name appears as-is in output
+- Named profile loaded from config; passthrough flags merged with profile (union)
+- Unknown profile name raises `ConfigError` with helpful message
+- Multi-sheet XLSX: all sheets present in output workbook
+- Multi-sheet XLSX: same entity in two sheets receives the same mask (shared registry)
+- Multi-sheet XLSX: sheets with no PII written back unchanged
+- Sheet count in output matches sheet count in input
+- Single-sheet CSV and JSON behaviour unchanged by multi-sheet refactor
+
+---
+
+### Stage B — New entity types (`AMOUNT`, `IBAN_CODE`, `MAC_ADDRESS`) `[x]`
+
+**New dependency:** none (all three use already-loaded model or already-present Presidio
+recognizers)
+
+**Deliverables**
+
+- `src/pseudoswapper/detector.py`
+  - `_REDACT_EXTRA_ENTITIES` — separate list containing `MONEY` (spaCy), `IBAN_CODE`,
+    `MAC_ADDRESS`; added to `_SUPPORTED_ENTITIES` only when `redact_mode=True` is passed to
+    `_build_engine`
+  - `_ENTITY_TYPE_MAP` extended: `"MONEY"` → `"AMOUNT"`, `"IBAN_CODE"` → `"IBAN_CODE"`,
+    `"MAC_ADDRESS"` → `"MAC_ADDRESS"`
+  - `Detector.__init__` gains optional `redact_mode: bool = False` parameter
+- `src/pseudoswapper/tokenizer.py`
+  - `REDACT_BYPASSABLE_TYPES` frozenset: `{"AMOUNT", "IBAN_CODE", "MAC_ADDRESS"}` — merged with
+    existing bypassable set when in redact mode
+- `tests/test_detector.py` — extended with redact_mode cases
+
+**Tests**
+
+- `$52,340` detected as `AMOUNT` in redact mode; not detected in standard mode
+- `GB29NWBK60161331926819` detected as `IBAN_CODE`
+- `00:1A:2B:3C:4D:5E` detected as `MAC_ADDRESS`
+- AMOUNT token: `[AMOUNT_1]`; consistent token on repeated occurrence
+- AMOUNT bypassable: `--passthrough AMOUNT` leaves figure as-is
+- IBAN and MAC_ADDRESS bypassable independently
+
+---
+
+### Stage C — EML support `[x]`
+
+**New dependency:** none (Python stdlib `email` module)
+
+**Deliverables**
+
+- `src/pseudoswapper/extractors/eml.py`
+  - `extract_text(path) -> str` — parse RFC 2822 file; extract From, To, Cc, Subject as a header
+    block; prefer `text/plain` body part; fall back to HTML-stripped `text/html`; join with `\n\n`
+  - `UnsupportedEmailError` — raised when no body content is extractable
+- `src/pseudoswapper/modes/document.py` — `.eml` branch added to `redact_document` dispatch;
+  output forced to `.txt`
+- `tests/fixtures/sample_email.eml` — realistic fake EML with From, To, Subject, plain-text body
+  containing names, emails, and a financial figure
+- `tests/test_eml.py`
+
+**Tests**
+
+- Names and emails in headers redacted
+- Subject line redacted
+- Body PII redacted
+- Output is `.redacted.txt`
+- Multipart EML (text/plain + text/html): plain part used, HTML part ignored
+- HTML-only EML: HTML stripped, plain text extracted and redacted
+- Empty body raises `UnsupportedEmailError`
+
+---
+
+### Stage D — MSG support `[x]`
+
+**New dependency:** `extract-msg >= 0.48` (pure Python, MIT licensed; added to `pyproject.toml`)
+
+**Deliverables**
+
+- `src/pseudoswapper/extractors/msg.py`
+  - `extract_text(path) -> str` — open MSG with `extract_msg.Message`; extract sender, recipients,
+    subject, body; same header block format as EML extractor; prefer plain text body, fall back to
+    HTML-stripped HTML body
+- `src/pseudoswapper/modes/document.py` — `.msg` branch added to dispatch; output forced to `.txt`
+- `tests/fixtures/sample_email.msg` — generated programmatically or via extract-msg test helpers
+- `tests/test_msg.py`
+
+**Tests**
+
+- Mirrors EML test suite: headers redacted, subject redacted, body PII redacted, output `.txt`
+- MSG with HTML body: HTML stripped, content redacted
+- MSG with no readable body: `UnsupportedEmailError` raised
+
+---
+
+### Stage E — Batch mode `[x]`
+
+**New dependency:** none
+
+**Deliverables**
+
+- `src/pseudoswapper/modes/document.py` — `_build_pipeline` gains `_registry` / `_tokenizer`
+  parameters; all `_redact_*` functions thread them through; `redact_document` exposes them
+- `src/pseudoswapper/modes/structured.py` — `redact_structured` gains `_registry` / `_tokenizer`
+  parameters; when provided, skips `EntityRegistry` / `Tokenizer` construction and employee
+  pre-registration (already done at batch start)
+- `src/pseudoswapper/modes/redact.py`
+  - `redact_file` gains `_registry` / `_tokenizer` parameters; passes them to `redact_structured`
+    and `redact_document`
+  - `SUPPORTED_BATCH_EXTENSIONS` — frozenset of extensions eligible for batch discovery
+  - `redact_batch(directory, config, passthrough_types, recursive, on_file)` — builds one shared
+    `EntityRegistry` + `Tokenizer`, calls `_pre_register_employees` once, loops over discovered
+    files calling `redact_file` with the shared pipeline, collects per-file results, returns
+    `{processed, succeeded, failed, results}` summary; per-file errors do not abort the batch
+- `src/pseudoswapper/cli.py` — `redact_cmd` argument renamed from `file` to `target`;
+  `--recursive/-r` flag added; command branches: directory → `redact_batch` with `on_file`
+  callback printing per-file tick/cross lines and a summary; file → existing single-file path
+- `tests/test_redact.py` — 8 new batch tests added (all supported files processed; same entity
+  same mask across files; `.redacted` files skipped; unsupported extensions skipped; one-error-
+  does-not-abort; recursive subdirectory; empty directory; `on_file` callback)
+
+**Tests**
+
+- Directory with all supported files: all produce `.redacted` outputs — PASS
+- Same entity across two `.txt` files produces the same mask (shared registry) — PASS
+- `.redacted.txt` files in directory are skipped — PASS
+- Unsupported extensions (e.g. `.png`) skipped, no error — PASS
+- One corrupt file does not abort batch; `failed=1`, `succeeded=N-1` — PASS
+- `--recursive` finds files in subdirectories; without flag they are skipped — PASS
+- Empty directory: `processed=0, succeeded=0, failed=0`, no error — PASS
+- `on_file` callback invoked once per file — PASS
+- 229 tests total, all passing
 
 ---
 

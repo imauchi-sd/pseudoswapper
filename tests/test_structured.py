@@ -262,3 +262,79 @@ def test_round_trip_json(tmp_path):
 
     assert "John Doe" in content
     assert "john.doe@acme.com" in content
+
+
+# ── Multi-sheet XLSX ─────────────────────────────────────────────────────────
+
+def _make_multisheet_xlsx(path: Path) -> Path:
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws1 = wb.active
+    ws1.title = "Summary"
+    for row in [["employee_id", "full_name", "email"],
+                ["E001", "John Doe", "john.doe@acme.com"],
+                ["E002", "Jane Smith", "jane@acme.com"]]:
+        ws1.append(row)
+    ws2 = wb.create_sheet("Events")
+    for row in [["employee_id", "action"],
+                ["E001", "login"],
+                ["E001", "file_access"]]:
+        ws2.append(row)
+    ws3 = wb.create_sheet("Metadata")
+    for row in [["key", "value"],
+                ["report_date", "2024-01-15"],
+                ["generated_by", "system"]]:
+        ws3.append(row)
+    wb.save(path)
+    return path
+
+
+def test_multisheet_all_sheets_present_in_output(tmp_path):
+    src = _make_multisheet_xlsx(tmp_path / "multi.xlsx")
+    out = redact_structured(src, CORRELATED_CFG, tmp_path)
+    sheet_names = pd.ExcelFile(out).sheet_names
+    assert "Summary" in sheet_names
+    assert "Events" in sheet_names
+    assert "Metadata" in sheet_names
+
+
+def test_multisheet_sheet_count_matches_input(tmp_path):
+    src = _make_multisheet_xlsx(tmp_path / "multi.xlsx")
+    out = redact_structured(src, CORRELATED_CFG, tmp_path)
+    assert len(pd.ExcelFile(out).sheet_names) == 3
+
+
+def test_multisheet_same_entity_same_mask_across_sheets(tmp_path):
+    src = _make_multisheet_xlsx(tmp_path / "multi.xlsx")
+    out = redact_structured(src, CORRELATED_CFG, tmp_path)
+    df_summary = pd.read_excel(out, sheet_name="Summary", dtype=str, keep_default_na=False)
+    df_events = pd.read_excel(out, sheet_name="Events", dtype=str, keep_default_na=False)
+    # E001 should map to the same token in both sheets
+    summary_e001 = df_summary["employee_id"].iloc[0]
+    events_e001 = df_events["employee_id"].iloc[0]
+    assert summary_e001 == events_e001
+
+
+def test_multisheet_pii_redacted_in_all_sheets(tmp_path):
+    src = _make_multisheet_xlsx(tmp_path / "multi.xlsx")
+    out = redact_structured(src, CORRELATED_CFG, tmp_path)
+    df_summary = pd.read_excel(out, sheet_name="Summary", dtype=str, keep_default_na=False)
+    assert "John Doe" not in df_summary["full_name"].values
+    assert "john.doe@acme.com" not in df_summary["email"].values
+
+
+def test_multisheet_clean_sheet_data_preserved(tmp_path):
+    src = _make_multisheet_xlsx(tmp_path / "multi.xlsx")
+    out = redact_structured(src, CORRELATED_CFG, tmp_path)
+    df_meta = pd.read_excel(out, sheet_name="Metadata", dtype=str, keep_default_na=False)
+    assert "report_date" in df_meta["key"].values
+
+
+def test_single_sheet_xlsx_unaffected(tmp_path):
+    src = shutil.copy(FIXTURE_XLSX, tmp_path / "data.xlsx")
+    out = redact_structured(Path(src), CORRELATED_CFG, tmp_path)
+    assert out.name == "data.redacted.xlsx"
+    assert out.exists()
+    df = pd.read_excel(out, dtype=str, keep_default_na=False)
+    non_empty = df["employee_id"].dropna()
+    assert not any(v.startswith("E00") for v in non_empty if v)

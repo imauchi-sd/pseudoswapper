@@ -117,18 +117,20 @@ def _process_rows(
     detector: Detector,
     force_fields: list[str] | None = None,
     on_row: Callable[[int, int], None] | None = None,
+    row_offset: int = 0,
+    total_override: int | None = None,
 ) -> list[dict]:
     correlated: set[str] = set(
         (config.get("structured") or {}).get("correlated_fields", [])
     )
     forced: set[str] = set(force_fields or [])
-    total = len(rows)
+    total = total_override if total_override is not None else len(rows)
 
     result_rows: list[dict] = []
 
     for i, row in enumerate(rows):
         if on_row:
-            on_row(i, total)
+            on_row(row_offset + i, total)
         out = dict(row)
 
         # ── No anchor field resolved ─────────────────────────────────────
@@ -253,6 +255,28 @@ def _read_file(file: Path) -> tuple[list[dict], list[str]]:
         raise ValueError(f"Unsupported file type: {file.suffix}")
 
 
+def _read_xlsx_sheets(file: Path) -> dict[str, tuple[list[dict], list[str]]]:
+    import pandas as pd
+    sheets: dict[str, tuple[list[dict], list[str]]] = {}
+    with pd.ExcelFile(str(file)) as xl:
+        for sheet_name in xl.sheet_names:
+            df = xl.parse(sheet_name, dtype=str, keep_default_na=False)
+            sheets[sheet_name] = (df.to_dict("records"), list(df.columns))
+    return sheets
+
+
+def _write_xlsx_sheets(
+    sheets: dict[str, tuple[list[dict], list[str]]],
+    out_path: Path,
+) -> None:
+    import pandas as pd
+    with pd.ExcelWriter(str(out_path), engine="openpyxl") as writer:
+        for sheet_name, (rows, columns) in sheets.items():
+            pd.DataFrame(rows, columns=columns).to_excel(
+                writer, sheet_name=sheet_name, index=False
+            )
+
+
 def _write_file(rows: list[dict], columns: list[str], out_path: Path) -> None:
     suffix = out_path.suffix.lower()
     if suffix == ".csv":
@@ -279,34 +303,63 @@ def redact_structured(
     on_row: Callable[[int, int], None] | None = None,
     masking_rules: dict | None = None,
     subject_values: frozenset[str] | None = None,
+    write_session: bool = True,
+    strict_protection: bool = True,
+    redact_mode: bool = False,
+    _registry=None,
+    _tokenizer=None,
 ) -> Path:
     """Run structured mode: read → anchor resolution → row processing → write → save session."""
     from pseudoswapper.modes.document import _pre_register_employees
 
-    registry = EntityRegistry()
-    tokenizer = Tokenizer(
-        registry,
-        passthrough_types=passthrough_types,
-        masking_rules=masking_rules or {},
-        subject_values=subject_values,
-    )
-    detector = Detector(config)
-    _pre_register_employees(config, tokenizer)
-
-    rows, columns = _read_file(file)
-    anchor_field = _resolve_anchor(columns, cli_anchor, config)
+    registry = _registry if _registry is not None else EntityRegistry()
+    if _tokenizer is not None:
+        tokenizer = _tokenizer
+    else:
+        tokenizer = Tokenizer(
+            registry,
+            passthrough_types=passthrough_types,
+            masking_rules=masking_rules or {},
+            subject_values=subject_values,
+            strict_protection=strict_protection,
+        )
+    detector = Detector(config, redact_mode=redact_mode)
+    if _registry is None:
+        _pre_register_employees(config, tokenizer)
 
     config_force_fields: list[str] = (config.get("structured") or {}).get("force_fields", [])
     resolved_force_fields = force_fields if force_fields is not None else config_force_fields
 
-    processed = _process_rows(rows, anchor_field, config, tokenizer, registry, detector, resolved_force_fields, on_row=on_row)
-
+    suffix = file.suffix.lower()
     out = _output_path(file)
-    _write_file(processed, columns, out)
 
-    if session_exists(cwd):
-        save_session(registry, cwd)
+    if suffix in (".xlsx", ".xls"):
+        all_sheets = _read_xlsx_sheets(file)
+        total_rows = sum(len(rows) for rows, _ in all_sheets.values())
+        processed_sheets: dict[str, tuple[list[dict], list[str]]] = {}
+        row_offset = 0
+        for sheet_name, (rows, columns) in all_sheets.items():
+            anchor_field = _resolve_anchor(columns, cli_anchor, config)
+            processed = _process_rows(
+                rows, anchor_field, config, tokenizer, registry, detector,
+                resolved_force_fields,
+                on_row=on_row,
+                row_offset=row_offset,
+                total_override=total_rows,
+            )
+            processed_sheets[sheet_name] = (processed, columns)
+            row_offset += len(rows)
+        _write_xlsx_sheets(processed_sheets, out)
     else:
-        create_session(registry, cwd)
+        rows, columns = _read_file(file)
+        anchor_field = _resolve_anchor(columns, cli_anchor, config)
+        processed = _process_rows(rows, anchor_field, config, tokenizer, registry, detector, resolved_force_fields, on_row=on_row)
+        _write_file(processed, columns, out)
+
+    if write_session:
+        if session_exists(cwd):
+            save_session(registry, cwd)
+        else:
+            create_session(registry, cwd)
 
     return out

@@ -192,6 +192,174 @@ Masked values are stored in `EntityRegistry._forward` (so repeated occurrences o
 
 ---
 
+### Decision 9: `redact` command — one-time permanent redaction without a session
+
+**Decision:** Introduce a dedicated `pseudoswapper redact <file>` command that always runs in mask
+mode and never writes a session. The output file is the artifact — there is no restore path.
+
+**Rationale:** The `document` and `structured` commands were designed around the tokenise → share →
+restore cycle. Post-incident analysis produces a different workflow: an exposure report needs to be
+permanently sanitised before being shared with internal teams who have no need (or clearance) to see
+the original values. Creating a session for this use case is actively misleading — it implies
+restoration is possible when it is not the intent.
+
+The DSAR command is also session-free and mask-only, but requires a data subject config and is
+scoped to a specific compliance use case. `redact` is the general-purpose equivalent: no subject, no
+config overhead, one command.
+
+**Relationship to existing commands:**
+
+| Command | Mode | Session | Subject config | Protection model |
+|---|---|---|---|---|
+| `document` / `structured` | tokenize (default) or mask | yes | no | PERSON, EMAIL, COMPANY, ORG, CREDIT_CARD always protected |
+| `dsar-redaction` | mask always | no | yes (required) | PERSON, EMAIL, COMPANY, ORG, CREDIT_CARD always protected |
+| `redact` | mask always | no | no | CREDIT_CARD only unconditionally protected (see Decision 10) |
+
+---
+
+### Decision 10: Relaxed protection model in `redact`
+
+**Decision:** In the `redact` command, only `CREDIT_CARD` is unconditionally redacted. All other
+types — including `PERSON`, `EMAIL`, `COMPANY`, and `ORG` — are redacted by default but can be
+passthroughed via `--passthrough` or a named profile.
+
+**Rationale:** The strict protection model in `document`/`structured` exists to prevent accidental
+exposure when handing data to an external AI. For internal reports the threat model is different:
+the reader is a trusted colleague who needs actionable information. An incident report that says
+"[PERSON_1] requires MFA reset and [EMAIL_1] is the affected account" is useless — the security
+team needs to know the actual email and name to take action.
+
+`CREDIT_CARD` remains unconditionally protected in all modes because PCI-DSS compliance applies
+regardless of audience.
+
+**`--passthrough` scope extension:** In `document`/`structured`, `--passthrough` silently drops any
+attempt to bypass a protected type. In `redact`, the same flag accepts any type including those that
+are protected in other commands. This is an intentional divergence — the commands serve different
+purposes and the protection guarantees are mode-specific, not global.
+
+**Named redaction profiles:** The `pseudoswapper_config.yaml` gains a `redact_profiles` block
+allowing users to save named passthrough configurations for repeated workflows:
+
+```yaml
+redact_profiles:
+  incident_report:
+    passthrough: [PERSON, EMAIL, COMPANY, ORG]
+```
+
+Used as: `pseudoswapper redact report.xlsx --profile incident_report`
+
+Profiles are resolved before CLI `--passthrough` flags; both are merged (union semantics, same as
+the existing `--passthrough` + `passthrough_types` merge). `CREDIT_CARD` is always removed from the
+effective passthrough set regardless of what is listed in a profile.
+
+---
+
+### Decision 11: Multi-sheet XLSX support
+
+**Decision:** When `redact` (and the `structured` command) processes an XLSX file, all sheets are
+read, redacted, and written back to the output workbook. A single `EntityRegistry` is shared across
+all sheets for the entire workbook.
+
+**Rationale:** The current implementation reads only the first sheet (`pd.read_excel` default). An
+exposure report with a Summary sheet, a Raw Events sheet, and an Affected Accounts sheet would
+silently lose all but the first. This is a data loss bug.
+
+**Why a shared registry matters:** The same person's name may appear in multiple sheets. If each
+sheet received an independent registry, `Alice Wong` in Sheet 1 might become `1_A.W.` while `Alice
+Wong` in Sheet 3 becomes `2_A.W.` — implying two different people. A shared registry guarantees
+consistent masking across the entire workbook.
+
+**Implementation approach:** `pd.ExcelFile` to read all sheet names, then `pd.read_excel` per
+sheet. `pd.ExcelWriter` to write all sheets back. Anchor field resolution runs independently per
+sheet (each sheet may have a different column layout). Progress reporting counts total rows across
+all sheets.
+
+**Scope:** Multi-sheet support applies to `redact` and is also retrofitted to the `structured`
+command as a fix. The existing single-sheet behaviour was a silent limitation, not a design
+decision.
+
+---
+
+### Decision 12: New entity types scoped to `redact`
+
+**Decision:** Three new entity types are introduced and available initially in `redact` only. All
+three are bypassable (not protected).
+
+| Type | Detection source | Token format | Rationale |
+|---|---|---|---|
+| `AMOUNT` | spaCy `MONEY` entity (already loaded model) | `[AMOUNT_1]` | Financial figures (salary, payroll) — magnitude alone is sensitive, so partial masking and range bucketing were rejected in favour of full token replacement |
+| `IBAN_CODE` | Presidio `IbanRecognizer` (built-in) | `[IBAN_CODE_1]` | EU-based org; IBAN is the standard bank account format; US_BANK_NUMBER not required |
+| `MAC_ADDRESS` | Presidio `MacAddressRecognizer` (built-in) | `[MAC_ADDRESS_1]` | Network forensics artifact common in incident response analysis |
+
+**Why bypassable and not protected:** Unlike names or emails, these types have contexts where their
+presence in output is analytically necessary (e.g. a network analyst needs MAC addresses visible in
+a forensic report). Making them bypassable follows the same rationale as `IP`, `DOMAIN`, and `URL`.
+
+**Why `AMOUNT` uses full token:** Partial masking (`$XX,XXX`) preserves magnitude. Range bucketing
+(`[$40k–$60k]`) preserves order of magnitude. In payroll or executive compensation contexts, even
+approximate figures are sensitive. Full token replacement (`[AMOUNT_1]`) reveals nothing about the
+value.
+
+**Scope note:** These types are not added to the existing `document` and `structured` commands in
+this phase to avoid introducing detection noise in the tokenise → restore workflow. They can be
+promoted to the main detector once validated.
+
+---
+
+### Decision 13: Email file support (EML and MSG)
+
+**Decision:** `redact` accepts `.eml` and `.msg` files. Both are routed through the document
+pipeline and produce a `.redacted.txt` output.
+
+**EML (RFC 2822):** Parsed with Python's stdlib `email` module (no new dependency). Text extraction
+prefers the `text/plain` MIME part; falls back to stripping HTML tags from `text/html` if no plain
+part exists. Metadata fields (From, To, Subject, Date) are extracted as a structured header block
+and prepended to the body before detection — this ensures email addresses and names in headers are
+also redacted.
+
+**MSG (Outlook compound document):** Parsed with `extract-msg` (pure Python, MIT licensed). Same
+extraction logic as EML after parsing: sender, recipients, subject, body. MSG is the native Outlook
+format; it is more common than EML in enterprise environments where incident artifacts come from
+Exchange exports.
+
+**Output format:** Both formats produce `.redacted.txt`. Reconstructing a valid EML or MSG with
+redacted content would require rebuilding MIME structure, re-encoding, and preserving all headers —
+complexity with no practical benefit since the output is consumed by humans reviewing the redaction,
+not re-sent as email.
+
+**Attachments:** Attachment extraction is deferred. Attachments are treated as separate files
+handled by batch mode (Decision 14) rather than extracted inline. This keeps the single-file
+extractor simple and avoids decisions about how to name and route extracted attachment files.
+
+---
+
+### Decision 14: Batch mode — folder processing
+
+**Decision:** `pseudoswapper redact` accepts a directory path in addition to a file path. When a
+directory is supplied, all supported files in that directory are processed in sequence using the
+same `redact` pipeline. A single `EntityRegistry` is shared across the entire batch.
+
+**Rationale:** Post-incident analysis involves a folder of artifacts — emails, attachments,
+exported logs. Running `pseudoswapper redact` once per file is feasible but friction-heavy. A
+folder target removes that friction without requiring a new command.
+
+**Shared registry across the batch:** Same rationale as multi-sheet XLSX (Decision 11). If `Alice
+Wong` appears in `email_001.eml` and `attachment_003.docx`, both should produce the same mask. The
+shared registry is initialised once at batch start and passed to every file's pipeline.
+
+**Supported file discovery:** Files in the target directory are filtered to supported extensions
+only (`.txt`, `.docx`, `.pdf`, `.csv`, `.json`, `.xlsx`, `.eml`, `.msg`). Subdirectories are not
+recursed by default; a `--recursive` flag enables recursion.
+
+**Progress reporting:** Per-file progress line (filename, status) rather than a single aggregate
+bar, so the user can see which file is being processed. A summary line at the end shows total files
+processed and any errors.
+
+**No session written:** Consistent with single-file `redact` behaviour. The batch produces output
+files only; there is no restore path.
+
+---
+
 ## Email Handling: The Hard Problem
 
 Email addresses are a special case because they often encode personal information (first name,
@@ -231,6 +399,8 @@ This is the authoritative list of known limitations to carry into USER_GUIDE.md.
 | L9 | Opaque ID anchors restore to the ID, not the person name | `[PERSON_1]` → `"E001"` rather than `"John Doe"` in restored AI output | Use `full_name` as anchor when human-readable restoration is required |
 | L10 | `passthrough_types` intentionally leaves selected entity types unreplaced | The AI assistant receives original values for bypassed types | Protected types (PERSON, EMAIL, COMPANY, ORG) cannot be bypassed; user is responsible for assessing sensitivity of bypassed types |
 | L11 | Masked values cannot be restored | `pseudoswapper restore` leaves masked values (`5_J.D.`, `411111XXXXXX1111`) as-is — they are not in the session's reverse map | Design intent; use tokenize mode when full restoration is required |
+| L12 | Email attachments are not extracted inline | `.eml` and `.msg` extractors process only the email body and headers; attachments are not unpacked | Run `redact` in batch mode on the folder containing both the email file and separately-saved attachments |
+| L13 | `AMOUNT` detection is English-only | The `AMOUNT` type relies on spaCy's `MONEY` NER from `en_core_web_lg`, which is trained on English-language text; non-English monetary expressions may be missed | For non-English figures, add known amounts to `company_terms` or use the `AMOUNT` passthrough and redact manually |
 
 ---
 
@@ -248,13 +418,16 @@ The USER_GUIDE.md covers:
 2. **Choosing a mode**
    - Document mode: when to use, what it handles, what it doesn't
    - Structured mode: when to use, what it handles, what it doesn't
-   - Decision guide: "if your file is a CSV, spreadsheet, or log file → Structured; otherwise → Document"
+   - DSAR redaction: compliance use case
+   - Redact mode: one-time permanent redaction for incident reports and internal distribution
+   - Decision guide
 
 3. **Setting up the YAML config**
    - Where the file lives
    - How to add company terms
    - How to add known employees
    - How to set anchor field for structured mode
+   - `redact_profiles` block for named passthrough configurations
    - Security note: treat this file as sensitive
 
 4. **Anchor field selection (Structured mode)**
@@ -283,3 +456,12 @@ The USER_GUIDE.md covers:
    - The redacted file is safe to share; the terminal session is not
    - The YAML config is sensitive; don't commit it to version control
    - The tool makes no network calls
+
+11. **One-time redaction (`redact` command)**
+    - When to use `redact` instead of `document`/`structured`
+    - Relaxed protection model: only CREDIT_CARD always protected; PERSON/EMAIL etc. passthroughable
+    - Supported file types: `.txt`, `.docx`, `.pdf`, `.eml`, `.msg`, `.csv`, `.json`, `.xlsx`
+    - New entity types: AMOUNT, IBAN_CODE, MAC_ADDRESS — detection, token format, passthrough
+    - Named redaction profiles (`redact_profiles` in config)
+    - Batch folder mode: supply a directory instead of a file; shared entity registry; `--recursive` flag
+    - No session written; no restore path

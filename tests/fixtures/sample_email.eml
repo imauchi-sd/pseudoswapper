@@ -1,0 +1,27 @@
+From: John Doe <john.doe@acme.com>
+To: Jane Smith <j.smith@acme.com>
+Cc: alice.wong@acme.com
+Subject: Q3 Payroll Report Review
+Date: Mon, 15 Jan 2024 09:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary_001"
+
+--boundary_001
+Content-Type: text/plain; charset=utf-8
+
+Hi Jane,
+
+Please find the attached Q3 payroll report for your review.
+
+The report was prepared by John Doe and covers all employees.
+If you have questions, contact alice.wong@acme.com or call +44 20 7946 0958.
+
+Thanks,
+John Doe
+
+--boundary_001
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Please see the plain text part.</p></body></html>
+
+--boundary_001--

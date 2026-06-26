@@ -163,7 +163,7 @@ def _pick_file(work_dir: Path, mode: str) -> Path:
         elif mode == "document":
             if ext in _STRUCTURED_EXTENSIONS or ".redacted" in f.name:
                 continue
-        elif mode == "dsar":
+        elif mode in ("dsar", "redact"):
             if ".redacted" in f.name:
                 continue
         # mode == "restore": show all non-hidden files
@@ -272,6 +272,21 @@ def _prompt_force_fields(file: Path) -> list[str]:
         except ValueError:
             typer.echo(f"  Ignoring invalid entry: '{part}'", err=True)
     return selected
+
+
+def _resolve_redact_passthrough(
+    config: dict,
+    profile: Optional[str],
+    cli_flags: Optional[List[str]],
+) -> set[str]:
+    from pseudoswapper.config import ConfigError, get_redact_profile
+    profile_passthrough: set[str] = set()
+    if profile:
+        prof = get_redact_profile(config, profile)
+        profile_passthrough = {t.upper() for t in prof.get("passthrough", [])}
+    combined = profile_passthrough | {t.upper() for t in (cli_flags or [])}
+    combined.discard("CREDIT_CARD")
+    return combined
 
 
 def _resolve_passthrough(config: dict, cli_flags: Optional[List[str]]) -> set[str]:
@@ -677,6 +692,129 @@ def dsar_redaction_cmd(
                     masking_rules=masking_rules,
                     subject_values=subject_values,
                 )
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Redacted: {out}")
+
+
+@app.command(name="redact")
+def redact_cmd(
+    target: Optional[Path] = typer.Argument(None, help="File or directory to permanently redact"),
+    passthrough: Optional[List[str]] = typer.Option(
+        None, "--passthrough",
+        help=(
+            "Entity type to leave unreplaced (repeatable). "
+            "Accepts any type including PERSON, EMAIL, COMPANY, ORG. "
+            "CREDIT_CARD is always redacted regardless of this flag."
+        ),
+    ),
+    profile: Optional[str] = typer.Option(
+        None, "--profile", "-p",
+        help="Named redaction profile from config redact_profiles section.",
+    ),
+    employees_csv: Optional[Path] = typer.Option(
+        None, "--employees-csv", "-e",
+        help="CSV file of employees to pre-register (full_name, email, username columns).",
+    ),
+    recursive: bool = typer.Option(
+        False, "--recursive", "-r",
+        help="Recurse into subdirectories (directory mode only).",
+    ),
+) -> None:
+    """Permanently redact sensitive data with no session and no restore path.
+
+    Unlike 'document' and 'structured', output files are the final artifact —
+    there is no restore step. CREDIT_CARD is always redacted. All other entity
+    types (including PERSON, EMAIL, COMPANY, ORG) can be passthroughed via
+    --passthrough or a named --profile defined in config.
+
+    Supports all file formats: txt, docx, pdf, csv, json, xlsx (all sheets).
+
+    When TARGET is a directory, all supported files in it are redacted in one
+    pass using a shared entity registry (same name → same mask across files).
+    Use --recursive to include subdirectories.
+    """
+    try:
+        config = load_config(employees_csv=employees_csv)
+    except ConfigError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    try:
+        passthrough_types = _resolve_redact_passthrough(config, profile, passthrough)
+    except ConfigError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    # Directory mode
+    if target is not None and target.is_dir():
+        from pseudoswapper.modes.redact import SUPPORTED_BATCH_EXTENSIONS, redact_batch
+        typer.echo(f"Redacting files in: {target}")
+        typer.echo(f"Extensions: {', '.join(sorted(SUPPORTED_BATCH_EXTENSIONS))}")
+        if recursive:
+            typer.echo("Mode: recursive")
+        typer.echo("")
+
+        results_store: list[tuple[str, bool, str]] = []
+
+        def _on_file(file: Path, success: bool, msg: str) -> None:
+            tick = "✓" if success else "✗"
+            typer.echo(f"  {tick} {file.name}  →  {msg}")
+            results_store.append((file.name, success, msg))
+
+        try:
+            summary = redact_batch(
+                target, config,
+                passthrough_types=passthrough_types,
+                recursive=recursive,
+                on_file=_on_file,
+            )
+        except Exception as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+
+        typer.echo("")
+        typer.echo(f"Done: {summary['succeeded']} succeeded, {summary['failed']} failed, {summary['processed']} total")
+        if summary["failed"]:
+            raise typer.Exit(1)
+        return
+
+    # Single-file mode (existing behaviour)
+    file = _require_file(target, "redact")
+
+    from pseudoswapper.modes.redact import redact_file
+
+    is_structured = file.suffix.lower() in _STRUCTURED_EXTENSIONS
+
+    try:
+        if is_structured:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                transient=True,
+            ) as progress:
+                task = progress.add_task(f"Redacting {file.name}", total=None)
+
+                def _on_row(i: int, total: int) -> None:
+                    if i == 0:
+                        progress.update(task, total=total)
+                    progress.advance(task)
+
+                out = redact_file(file, config, passthrough_types=passthrough_types, on_row=_on_row)
+        else:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                TimeElapsedColumn(),
+                transient=True,
+            ) as progress:
+                progress.add_task(f"Redacting {file.name}…", total=None)
+                out = redact_file(file, config, passthrough_types=passthrough_types)
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

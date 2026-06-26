@@ -58,3 +58,21 @@ structured:
 # passthrough_types:
 #   - IP
 #   - DOMAIN
+
+# Redact command profiles — named passthrough configurations for repeat workflows.
+# Use with: pseudoswapper redact report.xlsx --profile incident_report
+# All types including PERSON, EMAIL, COMPANY, ORG can be listed here.
+# CREDIT_CARD is always redacted regardless of what is listed.
+#
+# redact_profiles:
+#   incident_report:
+#     passthrough:
+#       - PERSON
+#       - EMAIL
+#       - COMPANY
+#       - ORG
+#   network_forensics:
+#     passthrough:
+#       - IP
+#       - DOMAIN
+#       - MAC_ADDRESS
